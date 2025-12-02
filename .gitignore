@@ -23,6 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 
-docs/architecture
-docs/summaries
-docs/implementation
+docs/*
+!docs/guides
