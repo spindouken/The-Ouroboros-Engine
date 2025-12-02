@@ -24,10 +24,13 @@ export interface MultiRoundVotingSystem {
     round: number,
     ai: any,
     models: { default: string; cheap: string; advanced: string },
-    context?: string
+    context?: string,
+    originalRequirements?: string
   ): Promise<VotingResult>;
   calculateVariance(scores: number[]): number;
 }
+
+
 
 const K_THRESHOLD = 2; // "First to ahead by 2"
 
@@ -45,18 +48,27 @@ export function createMultiRoundVotingSystem(): MultiRoundVotingSystem {
       { id: 'logic_verifier', label: 'Logic Verifier', persona: 'You are a Logic Verifier. Check for logical fallacies, circular reasoning, and race conditions.', focus: 'Logic & Consistency', priority: 'high' },
       { id: 'req_verifier', label: 'Requirements Verifier', persona: 'You are a Requirements Verifier. Check if the spec meets the original goal and constraints.', focus: 'Requirements Alignment', priority: 'medium' },
       { id: 'proof_verifier', label: 'Proof Verifier', persona: 'You are a Proof Verifier. Check the formal proof for validity and soundness.', focus: 'Proof Validity', priority: 'high' },
-      { id: 'security_verifier', label: 'Security Verifier', persona: 'You are a Security Auditor. Check for vulnerabilities and safety risks.', focus: 'Security', priority: 'critical' },
-      { id: 'perf_verifier', label: 'Performance Verifier', persona: 'You are a Performance Engineer. Check for efficiency and scalability issues.', focus: 'Performance', priority: 'low' }
+      { id: 'security_verifier', label: 'Security Auditor', persona: 'You are a Security Auditor. Check for vulnerabilities and safety risks.', focus: 'Security', priority: 'critical' },
+      { id: 'perf_verifier', label: 'Performance Engineer', persona: 'You are a Performance Engineer. Check for efficiency and scalability issues.', focus: 'Performance', priority: 'low' }
     ];
     return roles[index % roles.length];
   };
+
+  const CONSTITUTION = `
+  **THE CONSTITUTION (CORE AXIOMS):**
+  1. **The Axiom of Improvement:** New code must be objectively better than the code it replaces.
+  2. **The Axiom of Safety:** No change shall compromise the security or integrity of the system.
+  3. **The Axiom of Truth:** The system shall not hallucinate or fabricate data.
+  4. **The Axiom of Fidelity:** The implementation must strictly adhere to the approved Specification.
+  `;
 
   const conductVoting = async (
     spec: string,
     round: number,
     ai: any,
     models: { default: string; cheap: string; advanced: string },
-    context: string = "Evaluate this specification."
+    context: string = "Evaluate this specification.",
+    originalRequirements: string = ""
   ): Promise<VotingResult> => {
 
     const judgeOutputs: JudgeOutput[] = [];
@@ -66,113 +78,166 @@ export function createMultiRoundVotingSystem(): MultiRoundVotingSystem {
     let vetoTriggered = false;
     let vetoReason = "";
 
-    // We simulate a stream of up to 7 judges (or more if needed, but capped for safety)
     const MAX_JUDGES = 7;
 
-    for (let i = 0; i < MAX_JUDGES; i++) {
-      // Check termination conditions
-      if (passCount - failCount >= K_THRESHOLD) break; // Pass wins
-      if (failCount - passCount >= K_THRESHOLD) break; // Fail wins
-      if (vetoTriggered) break;
+    // Create a promise that resolves when the voting is decisive
+    return new Promise<VotingResult>((resolve) => {
+      let completedJudges = 0;
+      let resolved = false;
 
-      const role = getVerifierRole(i);
-      const judgeId = `${role.id}_${i}`;
+      const checkConsensus = () => {
+        if (resolved) return;
 
-      // TIERED VOTING LOGIC
-      // Use cheap model for initial rounds or low priority roles
-      // Use advanced model for critical roles (Security) or later rounds
-      let selectedModel = models.default;
-      if (role.priority === 'critical' || round > 1) {
-        selectedModel = models.advanced;
-      } else if (role.priority === 'low') {
-        selectedModel = models.cheap;
-      }
+        const criticalRoles = [3]; // Index of Security Verifier
+        const criticalVotesCast = criticalRoles.every(idx =>
+          judgeOutputs.some(j => j.judgeId.includes(`_${idx}`))
+        );
 
-      try {
-        let attempts = 0;
-        let success = false;
-        let resp: any;
+        // Termination Conditions
+        if (vetoTriggered) {
+          resolved = true;
+          resolve({
+            round,
+            judgeCount: completedJudges,
+            scores,
+            averageScore: 0, // Veto kills the score
+            variance: 0,
+            needsEscalation: false,
+            requiresHumanReview: true,
+            judgeOutputs
+          });
+          return;
+        }
 
-        while (attempts < 3 && !success) {
-          try {
-            resp = await ai.models.generateContent({
-              model: selectedModel,
-              contents: `You are: ${role.persona}
-                    
-                    ARTIFACT TO VERIFY:
-                    """
-                    ${spec.substring(0, 15000)}
-                    """
-                    
-                    TASK: ${context}
-                    FOCUS: ${role.focus}
-                    
-                    Vote PASS (score > 70) or FAIL (score <= 70).
-                    CRITICAL: If you find a FATAL flaw, issue a VETO (score 0).
-                    
-                    Return JSON: { "score": number, "reasoning": "short justification", "veto": boolean }`,
-              config: { responseMimeType: "application/json" }
+        // Only allow early exit if critical roles have voted
+        if (criticalVotesCast) {
+          if (passCount - failCount >= K_THRESHOLD) {
+            resolved = true;
+            const avg = scores.reduce((a, b) => a + b, 0) / (scores.length || 1);
+            resolve({
+              round,
+              judgeCount: completedJudges,
+              scores,
+              averageScore: avg,
+              variance: calculateVariance(scores),
+              needsEscalation: false,
+              requiresHumanReview: false,
+              judgeOutputs
             });
-            success = true;
-          } catch (err: any) {
-            if (err.message?.includes("429") || err.message?.includes("quota")) {
-              console.warn(`Verifier ${judgeId} hit rate limit. Waiting 60s...`);
-              await new Promise(resolve => setTimeout(resolve, 60000));
-              attempts++;
-            } else {
-              throw err;
-            }
+            return;
+          }
+
+          if (failCount - passCount >= K_THRESHOLD) {
+            resolved = true;
+            const avg = scores.reduce((a, b) => a + b, 0) / (scores.length || 1);
+            resolve({
+              round,
+              judgeCount: completedJudges,
+              scores,
+              averageScore: avg,
+              variance: calculateVariance(scores),
+              needsEscalation: false, // Decisive Fail
+              requiresHumanReview: false,
+              judgeOutputs
+            });
+            return;
           }
         }
 
-        if (!success) throw new Error(`Verifier ${judgeId} failed after retries.`);
+        if (completedJudges >= MAX_JUDGES) {
+          resolved = true;
+          const avg = scores.reduce((a, b) => a + b, 0) / (scores.length || 1);
+          resolve({
+            round,
+            judgeCount: completedJudges,
+            scores,
+            averageScore: avg,
+            variance: calculateVariance(scores),
+            needsEscalation: true, // No consensus reached
+            requiresHumanReview: false,
+            judgeOutputs
+          });
+        }
+      };
 
-        const text = resp.text || "{}";
-        const json = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-        const score = json.score || 0;
-        const isVeto = json.veto === true;
+      // Launch all judges in parallel (Streaming)
+      for (let i = 0; i < MAX_JUDGES; i++) {
+        const role = getVerifierRole(i);
+        const judgeId = `${role.id}_${i}`;
 
-        judgeOutputs.push({
-          judgeId: judgeId,
-          score: score,
-          reasoning: json.reasoning || "No reasoning.",
-          focus: role.focus
-        });
-        scores.push(score);
-
-        // CONFLICT RESOLUTION: Hierarchy of Truth
-        // Security Veto overrides everything.
-        if (isVeto) {
-          vetoTriggered = true;
-          vetoReason = json.reasoning;
-          failCount++;
-          // Log Disagreement Episode if others passed? (Simplified here)
-        } else if (score > 70) {
-          passCount++;
-        } else {
-          failCount++;
+        let selectedModel = models.default;
+        if (role.priority === 'critical' || round > 1) {
+          selectedModel = models.advanced;
+        } else if (role.priority === 'low') {
+          selectedModel = models.cheap;
         }
 
-      } catch (e) {
-        console.error(`Verifier ${judgeId} failed`, e);
+        const runJudge = async () => {
+          if (resolved) return; // Stop if already resolved
+
+          try {
+            const resp = await ai.models.generateContent({
+              model: selectedModel,
+              contents: `You are: ${role.persona}
+                      
+                      ${CONSTITUTION}
+                      
+                      ${originalRequirements ? `ORIGINAL REQUIREMENTS:\n"""\n${originalRequirements}\n"""\n` : ''}
+                      
+                      ARTIFACT TO VERIFY:
+                      """
+                      ${spec.substring(0, 15000)}
+                      """
+                      
+                      TASK: ${context}
+                      FOCUS: ${role.focus}
+                      
+                      Vote PASS (score > 70) or FAIL (score <= 70).
+                      CRITICAL: If you find a FATAL flaw, issue a VETO (score 0).
+                      
+                      Return JSON: { "score": number, "reasoning": "short justification", "veto": boolean }`,
+              config: { responseMimeType: "application/json" }
+            });
+
+            const text = resp.text || "{}";
+            const json = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+            const score = json.score || 0;
+            const isVeto = json.veto === true;
+
+            if (resolved) return; // Check again after await
+
+            judgeOutputs.push({
+              judgeId: judgeId,
+              score: score,
+              reasoning: json.reasoning || "No reasoning.",
+              focus: role.focus
+            });
+            scores.push(score);
+            completedJudges++;
+
+            if (isVeto) {
+              vetoTriggered = true;
+              vetoReason = json.reasoning;
+              failCount++;
+            } else if (score > 70) {
+              passCount++;
+            } else {
+              failCount++;
+            }
+
+            checkConsensus();
+
+          } catch (err) {
+            console.error(`Verifier ${judgeId} failed`, err);
+            completedJudges++; // Count as completed (failed) so we don't hang
+            checkConsensus();
+          }
+        };
+
+        // Add a small stagger to avoid hitting rate limits instantly if many judges
+        setTimeout(() => runJudge(), i * 500);
       }
-    }
-
-    const averageScore = scores.reduce((a, b) => a + b, 0) / (scores.length || 1);
-    const variance = calculateVariance(scores);
-
-    const passed = !vetoTriggered && (passCount > failCount);
-
-    return {
-      round,
-      judgeCount: scores.length,
-      scores,
-      averageScore,
-      variance,
-      needsEscalation: !passed && !vetoTriggered,
-      requiresHumanReview: vetoTriggered,
-      judgeOutputs
-    };
+    });
   };
 
   return {

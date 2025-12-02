@@ -68,6 +68,10 @@ export interface Node {
     specification?: string;
     proof?: string;
   };
+
+  // Persistence Fields
+  parentId?: string;
+  timestamp?: number;
 }
 
 // --- MICRO-AGENT DECOMPOSITION (Requirements 1.1, 1.2, 1.3, 1.4, 1.5) ---
@@ -146,7 +150,7 @@ export interface VotingResult {
 }
 
 export interface MultiRoundVotingSystem {
-  conductVoting(spec: string, round: number, ai: any, models: { default: string; cheap: string; advanced: string }, context?: string): Promise<VotingResult>;
+  conductVoting(spec: string, round: number, ai: any, models: { default: string; cheap: string; advanced: string }, context?: string, originalRequirements?: string): Promise<VotingResult>;
   calculateVariance(scores: number[]): number;
 }
 
@@ -162,9 +166,9 @@ export interface AgentMemory {
 
 export interface AgentMemoryManager {
   storeMemory(agentId: string, memory: AgentMemory, ai?: any, model?: string, votingSystem?: MultiRoundVotingSystem): Promise<void>;
-  getMemory(agentId: string, limit?: number): AgentMemory[];
-  injectMemoryContext(agentId: string, prompt: string): string;
-  clearMemory(agentId: string): void;
+  getMemory(agentId: string, limit?: number): Promise<AgentMemory[]>;
+  injectMemoryContext(agentId: string, prompt: string): Promise<string>;
+  clearMemory(agentId: string): Promise<void>;
 }
 
 // --- EXTENDED GRAPH MODEL ---
@@ -249,6 +253,8 @@ export interface AppSettings {
   concurrency: number;
   rpm: number; // Requests per minute
   rpd: number; // Requests per day
+  apiKey?: string; // Google API Key
+  openaiApiKey?: string; // OpenAI API Key
 
   // New settings for MDAP features
   autoSaveInterval: number;
@@ -257,6 +263,8 @@ export interface AppSettings {
   enableStreaming: boolean;
   enableWebWorkers: boolean;
   enableAgentMemory: boolean;
+  enableSoundEffects?: boolean;
+  baseFontSize?: number; // New setting for UI scaling
   maxMicroAgentDepth?: number;
   initialJudgeCount?: number;
   budgetLimit?: number;
@@ -270,6 +278,8 @@ export interface AppSettings {
   model_synthesizer?: string;
   model_judge?: string;
   model_architect?: string;
+  model_manifestation?: string;
+  model_prism?: string;
 }
 
 // --- LOG ENTRY ---
@@ -383,6 +393,7 @@ export interface AppState {
   settings: AppSettings;
   usageMetrics: UsageMetrics;
   agentMemories: Record<string, AgentMemory[]>;
+  manifestation: string | null;
 }
 
 export interface SessionMetadata {

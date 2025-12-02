@@ -1,13 +1,9 @@
+import { db } from './db/ouroborosDB';
 import { KnowledgeGraph, KnowledgeNode, KnowledgeEdge, KnowledgeGraphLayer } from './types';
 
 export class KnowledgeGraphManager {
-    private graph: KnowledgeGraph;
 
     constructor() {
-        this.graph = {
-            nodes: {},
-            edges: []
-        };
     }
 
     /**
@@ -51,7 +47,7 @@ export class KnowledgeGraphManager {
             }
         }
 
-        this.graph.nodes[id] = {
+        await db.knowledge_graph.put({
             id,
             label,
             type,
@@ -59,51 +55,62 @@ export class KnowledgeGraphManager {
             content,
             metadata,
             densityScore
-        };
+        });
     }
 
     /**
      * Adds an edge between two nodes.
      */
-    addEdge(source: string, target: string, relation: string, weight: number = 1.0): void {
-        if (!this.graph.nodes[source] || !this.graph.nodes[target]) {
-            // console.warn(`Cannot add edge: Source ${source} or Target ${target} does not exist.`);
-            return;
-        }
-        this.graph.edges.push({ source, target, relation, weight });
+    async addEdge(source: string, target: string, relation: string, weight: number = 1.0): Promise<void> {
+        // We use the main edges table for now, distinguishing by type if needed, or just assuming 'knowledge' relation
+        // However, the current schema for edges is: ++id, source, target, type.
+        // We can use 'relation' as 'type'.
+        await db.edges.add({ source, target, type: relation });
     }
 
     /**
      * Retrieves a node by ID.
      */
-    getNode(id: string): KnowledgeNode | undefined {
-        return this.graph.nodes[id];
+    async getNode(id: string): Promise<KnowledgeNode | undefined> {
+        return await db.knowledge_graph.get(id);
     }
 
     /**
      * Queries the graph for nodes matching specific criteria.
      */
-    query(criteria: { layer?: KnowledgeGraphLayer; type?: string; labelContains?: string }): KnowledgeNode[] {
-        return Object.values(this.graph.nodes).filter(node => {
-            if (criteria.layer && node.layer !== criteria.layer) return false;
+    async query(criteria: { layer?: KnowledgeGraphLayer; type?: string; labelContains?: string }): Promise<KnowledgeNode[]> {
+        let collection = db.knowledge_graph.toCollection();
+
+        if (criteria.layer) {
+            collection = db.knowledge_graph.where('layer').equals(criteria.layer);
+        }
+
+        // Dexie filtering for other properties
+        return await collection.filter(node => {
             if (criteria.type && node.type !== criteria.type) return false;
             if (criteria.labelContains && !node.label.toLowerCase().includes(criteria.labelContains.toLowerCase())) return false;
             return true;
-        });
+        }).toArray();
     }
 
     /**
      * Returns the full graph state.
      */
-    getGraph(): KnowledgeGraph {
-        return this.graph;
+    async getGraph(): Promise<KnowledgeGraph> {
+        const nodesArr = await db.knowledge_graph.toArray();
+        const nodes = nodesArr.reduce((acc, node) => ({ ...acc, [node.id]: node }), {});
+        // We are not fetching edges here efficiently as they are mixed in the edges table. 
+        // For now, returning empty edges or we need to query edges table.
+        // Assuming we only need nodes for the "Blackboard" view usually.
+        return { nodes, edges: [] };
     }
 
     /**
      * Clears the graph (e.g., for new session).
      */
-    clear(): void {
-        this.graph = { nodes: {}, edges: [] };
+    async clear(): Promise<void> {
+        await db.knowledge_graph.clear();
+        // Also clear edges if we were storing them specifically for KG
     }
 
     /**
@@ -173,15 +180,20 @@ export class KnowledgeGraphManager {
     /**
      * Serializes the graph for storage.
      */
-    serialize(): string {
-        return JSON.stringify(this.graph);
+    async serialize(): Promise<string> {
+        const graph = await this.getGraph();
+        return JSON.stringify(graph);
     }
 
     /**
      * Deserializes a graph from storage.
      */
-    deserialize(json: string): void {
-        this.graph = JSON.parse(json);
+    async deserialize(json: string): Promise<void> {
+        const graph: KnowledgeGraph = JSON.parse(json);
+        await db.transaction('rw', db.knowledge_graph, async () => {
+            await db.knowledge_graph.clear();
+            await db.knowledge_graph.bulkPut(Object.values(graph.nodes));
+        });
     }
 }
 

@@ -32,11 +32,35 @@ export const EXPERT_PERSONAS = {
 };
 
 export const MODELS = [
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'High Intelligence, Low Rate Limit', rpm: 2, rpd: 50 },
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Balanced Speed & Intellect', rpm: 10, rpd: 250 },
-    { id: 'gemini-2.5-flash-preview', label: 'Gemini 2.5 Flash Preview', desc: 'Latest Flash Features', rpm: 10, rpd: 250 },
-    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', desc: 'Fast & Efficient', rpm: 15, rpd: 1000 },
-    { id: 'gemini-2.5-flash-lite-preview', label: 'Gemini 2.5 Flash-Lite Preview', desc: 'Latest Lite Features', rpm: 15, rpd: 1000 },
-    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Legacy Flash', rpm: 15, rpd: 200 },
-    { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', desc: 'Legacy Lite (High RPM)', rpm: 30, rpd: 200 },
+    // Google Models
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'High Intelligence, Low Rate Limit', rpm: 2, rpd: 50, provider: 'google' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Balanced Speed & Intellect', rpm: 10, rpd: 250, provider: 'google' },
+    { id: 'gemini-2.5-flash-preview', label: 'Gemini 2.5 Flash Preview', desc: 'Latest Flash Features', rpm: 10, rpd: 250, provider: 'google' },
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', desc: 'Fast & Efficient', rpm: 15, rpd: 1000, provider: 'google' },
+    { id: 'gemini-2.5-flash-lite-preview', label: 'Gemini 2.5 Flash-Lite Preview', desc: 'Latest Lite Features', rpm: 15, rpd: 1000, provider: 'google' },
+    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Legacy Flash', rpm: 15, rpd: 200, provider: 'google' },
+    { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', desc: 'Legacy Lite (High RPM)', rpm: 30, rpd: 200, provider: 'google' },
+
+    // OpenAI Models - Group 1 (250k tokens/day)
+    { id: 'gpt-5.1', label: 'GPT-5.1', desc: 'Latest Flagship', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', desc: 'Specialized Coding', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'gpt-5', label: 'GPT-5', desc: 'Flagship Intelligence', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'gpt-5-codex', label: 'GPT-5 Codex', desc: 'Coding Expert', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'gpt-5-chat-latest', label: 'GPT-5 Chat', desc: 'Latest Chat Model', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'gpt-4.1', label: 'GPT-4.1', desc: 'High Intelligence', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'gpt-4o', label: 'GPT-4o', desc: 'Omni Model', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'o1', label: 'o1', desc: 'Reasoning Model', rpm: 60, rpd: 250, provider: 'openai' },
+    { id: 'o3', label: 'o3', desc: 'Advanced Reasoning', rpm: 60, rpd: 250, provider: 'openai' },
+
+    // OpenAI Models - Group 2 (2.5m tokens/day)
+    { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini', desc: 'Efficient Coding', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'gpt-5-mini', label: 'GPT-5 Mini', desc: 'Efficient Generalist', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'gpt-5-nano', label: 'GPT-5 Nano', desc: 'Ultra-Fast', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', desc: 'Efficient GPT-4', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'gpt-4.1-nano', label: 'GPT-4.1 Nano', desc: 'Ultra-Fast GPT-4', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini', desc: 'Efficient Omni', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'o1-mini', label: 'o1 Mini', desc: 'Efficient Reasoning', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'o3-mini', label: 'o3 Mini', desc: 'Efficient Reasoning', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'o4-mini', label: 'o4 Mini', desc: 'Next-Gen Mini', rpm: 100, rpd: 2500, provider: 'openai' },
+    { id: 'codex-mini-latest', label: 'Codex Mini Latest', desc: 'Latest Code Mini', rpm: 100, rpd: 2500, provider: 'openai' },
 ];

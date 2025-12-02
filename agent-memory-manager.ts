@@ -1,7 +1,7 @@
+import { db } from './db/ouroborosDB';
 import { AgentMemory, AgentMemoryManager, MultiRoundVotingSystem } from './types';
 
 export class AgentMemoryManagerImpl implements AgentMemoryManager {
-    private memories: Map<string, AgentMemory[]> = new Map();
 
     async storeMemory(agentId: string, memory: AgentMemory, ai?: any, model?: string, votingSystem?: MultiRoundVotingSystem): Promise<void> {
         // Voting on Storage: Verify memory integrity
@@ -56,23 +56,38 @@ export class AgentMemoryManagerImpl implements AgentMemoryManager {
             }
         }
 
-        const agentMemories = this.memories.get(agentId) || [];
-        agentMemories.push(memory);
-        // Sort by timestamp desc and keep top 10 (pruning)
-        agentMemories.sort((a, b) => b.timestamp - a.timestamp);
-        if (agentMemories.length > 10) {
-            agentMemories.length = 10;
+        // Store in DB
+        await db.memories.add({
+            ...memory,
+            agentId
+        });
+
+        // Pruning: Keep top 10 by timestamp (descending)
+        // Dexie doesn't have a simple "keep top N" delete, so we query and delete excess.
+        const count = await db.memories.where('agentId').equals(agentId).count();
+        if (count > 10) {
+            const excess = await db.memories
+                .where('agentId').equals(agentId)
+                .reverse()
+                .sortBy('timestamp');
+
+            if (excess.length > 10) {
+                const toDelete = excess.slice(10).map(m => m.id!);
+                await db.memories.bulkDelete(toDelete);
+            }
         }
-        this.memories.set(agentId, agentMemories);
     }
 
-    getMemory(agentId: string, limit: number = 5): AgentMemory[] {
-        const agentMemories = this.memories.get(agentId) || [];
-        return agentMemories.slice(0, limit);
+    async getMemory(agentId: string, limit: number = 5): Promise<AgentMemory[]> {
+        return await db.memories
+            .where('agentId').equals(agentId)
+            .reverse()
+            .sortBy('timestamp')
+            .then(memories => memories.slice(0, limit));
     }
 
-    injectMemoryContext(agentId: string, prompt: string): string {
-        const memories = this.getMemory(agentId);
+    async injectMemoryContext(agentId: string, prompt: string): Promise<string> {
+        const memories = await this.getMemory(agentId);
         if (memories.length === 0) return prompt;
 
         const memoryContext = memories.map(m =>
@@ -82,8 +97,8 @@ export class AgentMemoryManagerImpl implements AgentMemoryManager {
         return `${prompt}\n\nPAST FEEDBACK & LEARNINGS:\n${memoryContext}`;
     }
 
-    clearMemory(agentId: string): void {
-        this.memories.delete(agentId);
+    async clearMemory(agentId: string): Promise<void> {
+        await db.memories.where('agentId').equals(agentId).delete();
     }
 }
 

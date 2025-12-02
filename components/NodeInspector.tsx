@@ -1,16 +1,24 @@
 import React, { useState } from 'react';
-import { Node, AppSettings, MicroTask, RedFlag, AgentMemory, LogEntry } from '../types';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db/ouroborosDB';
+import { OuroborosEngine } from '../engine/OuroborosEngine';
+import { AppSettings, LogEntry, Node } from '../types';
 
 interface NodeInspectorProps {
-    node: Node;
-    settings: AppSettings;
-    logs: LogEntry[];
+    nodeId: string;
     onClose: () => void;
-    onUpdateSettings: (settings: AppSettings) => void;
 }
 
-export const NodeInspector: React.FC<NodeInspectorProps> = ({ node, settings, logs, onClose, onUpdateSettings }) => {
-    const [activeTab, setActiveTab] = useState<'output' | 'mdap' | 'logs' | 'artifacts' | 'tribunal'>('output');
+export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose }) => {
+    const node = useLiveQuery(() => db.nodes.get(nodeId), [nodeId]);
+    const settings = useLiveQuery(() => db.settings.get(1)) || {} as AppSettings;
+    const logs = useLiveQuery(() => db.logs.where('nodeId').equals(nodeId).reverse().sortBy('timestamp'), [nodeId]) || [];
+
+    const onUpdateSettings = (newSettings: Partial<AppSettings>) => {
+        OuroborosEngine.getInstance().updateSettings(newSettings);
+    };
+
+    const [activeTab, setActiveTab] = useState<'output' | 'prompt' | 'mdap' | 'logs' | 'artifacts' | 'tribunal'>('output');
 
     if (!node) return null;
 
@@ -21,8 +29,8 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ node, settings, lo
         <div className="w-full node-glass border border-emerald-800/50 rounded-lg p-4 shadow-2xl max-h-[80vh] overflow-y-auto flex flex-col gap-3 bg-[#0a0a0a]/90 backdrop-blur-md pointer-events-auto">
             {/* Header */}
             <div className="flex justify-between items-center border-b border-emerald-800/50 pb-2">
-                <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-emerald-100 text-sm">
+                <div className="flex items-center gap-2 overflow-hidden">
+                    <h3 className="font-bold text-emerald-100 text-sm" title={node.label}>
                         {node.label}
                     </h3>
                     {node.score !== undefined && node.score !== 0 && (
@@ -39,6 +47,12 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ node, settings, lo
                             className={`px-3 py-1 text-xs rounded ${activeTab === 'output' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
                         >
                             Output
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('prompt')}
+                            className={`px-3 py-1 text-xs rounded ${activeTab === 'prompt' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
+                        >
+                            Prompt
                         </button>
                         <button
                             onClick={() => setActiveTab('mdap')}
@@ -85,6 +99,10 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ node, settings, lo
                     ) : (
                         <div className="text-xs text-emerald-800 italic">Thinking...</div>
                     )
+                ) : activeTab === 'prompt' ? (
+                    <div className="text-xs text-emerald-200/80 whitespace-pre-wrap leading-relaxed font-mono bg-black/20 p-2 rounded border border-emerald-900/30">
+                        {node.instruction}
+                    </div>
                 ) : activeTab === 'mdap' ? (
                     <MDAPPanel node={node} settings={settings} onUpdateSettings={onUpdateSettings} />
                 ) : activeTab === 'artifacts' ? (

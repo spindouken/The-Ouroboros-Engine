@@ -205,7 +205,7 @@ export class RedFlagValidatorImpl implements RedFlagValidator {
 
     // Check if escalation is needed (after 3 failures)
     if (newAttempts >= 3) {
-      const message = `Node ${nodeId} has failed validation 3 times. Escalating to human review.`;
+      const message = `Node ${nodeId} has failed validation 3 times. ESCALATED to human review.`;
 
       // Log escalation
       this.logRetry(nodeId, newAttempts, temperature, 'ESCALATED_TO_HUMAN');

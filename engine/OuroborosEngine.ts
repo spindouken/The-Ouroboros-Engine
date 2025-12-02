@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { UnifiedLLMClient } from './UnifiedLLMClient';
 import { Graph, LogEntry, PlanItem, Node, NodeStatus, AppSettings } from '../types';
 import { createPrismController } from '../prism-controller';
 import { createMultiRoundVotingSystem, formatVotingResult } from '../multi-round-voting';
@@ -6,57 +6,12 @@ import { createKnowledgeGraphManager } from '../knowledge-graph';
 import { createAgentMemoryManager } from '../agent-memory-manager';
 import { createRedFlagValidator } from '../red-flag-validator';
 import { createRateLimiter } from '../rate-limiter';
-
-// Define the Engine State interface
-export interface EngineState {
-    graph: Graph;
-    logs: LogEntry[];
-    isProcessing: boolean;
-    projectPlan: PlanItem[];
-    documentContent: string;
-    settings: AppSettings;
-    cycleCount: number;
-}
-
-// Define a listener type for state updates
-export type StateListener = (state: EngineState) => void;
+import { db } from '../db/ouroborosDB';
+import { useOuroborosStore } from '../store/ouroborosStore';
+import { Node as FlowNode, Edge as FlowEdge } from 'reactflow';
 
 export class OuroborosEngine {
     private static instance: OuroborosEngine;
-
-    // State
-    private state: EngineState = {
-        graph: { nodes: {}, edges: [] },
-        logs: [],
-        isProcessing: false,
-        projectPlan: [],
-        documentContent: "",
-        cycleCount: 0,
-        settings: {
-            model: 'gemini-2.5-flash',
-            concurrency: 4,
-            rpm: 10,
-            rpd: 250,
-            autoSaveInterval: 300,
-            enableRedFlagging: false,
-            enableMultiRoundVoting: false,
-            enableStreaming: false,
-            enableWebWorkers: false,
-            enableAgentMemory: false,
-            maxMicroAgentDepth: 3,
-            initialJudgeCount: 3,
-            gitIntegration: false,
-            redTeamMode: false,
-            debugMode: false,
-            model_specialist: '',
-            model_lead: '',
-            model_synthesizer: '',
-            model_judge: '',
-            model_architect: ''
-        }
-    };
-
-    private listeners: StateListener[] = [];
 
     // Subsystems
     private prismController;
@@ -67,7 +22,8 @@ export class OuroborosEngine {
     private rateLimiter;
 
     // API
-    private ai: GoogleGenAI | null = null;
+    private ai: UnifiedLLMClient;
+    private abortController: AbortController | null = null;
 
     private constructor() {
         this.prismController = createPrismController();
@@ -76,6 +32,11 @@ export class OuroborosEngine {
         this.memoryManager = createAgentMemoryManager();
         this.redFlagValidator = createRedFlagValidator();
         this.rateLimiter = createRateLimiter({ rpm: 60, rpd: 10000, enabled: true });
+        this.rateLimiter = createRateLimiter({ rpm: 60, rpd: 10000, enabled: true });
+        this.ai = new UnifiedLLMClient(
+            process.env.API_KEY || "",
+            process.env.OPENAI_API_KEY || ""
+        );
     }
 
     public static getInstance(): OuroborosEngine {
@@ -86,77 +47,182 @@ export class OuroborosEngine {
     }
 
     public setAIClient(apiKey: string) {
-        this.ai = new GoogleGenAI({ apiKey });
+        this.ai.updateKeys(apiKey);
     }
 
-    public updateSettings(newSettings: Partial<AppSettings>) {
-        this.state.settings = { ...this.state.settings, ...newSettings };
+    public async updateSettings(newSettings: Partial<AppSettings>) {
+        // Update Store
+        useOuroborosStore.getState().updateSettings(newSettings);
+
+        // Update DB
+        // We assume there is only one settings record, ID 1
+        const currentSettings = await db.settings.get(1) || {} as AppSettings;
+        await db.settings.put({ ...currentSettings, ...newSettings, id: 1 });
+
+        const settings = useOuroborosStore.getState().settings;
         this.rateLimiter.updateConfig({
-            rpm: this.state.settings.rpm,
-            rpd: this.state.settings.rpd,
+            rpm: settings.rpm,
+            rpd: settings.rpd,
             enabled: true
         });
-        this.notify();
     }
 
     public setDocumentContent(content: string) {
-        this.state.documentContent = content;
-        this.notify();
+        useOuroborosStore.getState().setDocumentContent(content);
     }
 
-    public subscribe(listener: StateListener): () => void {
-        this.listeners.push(listener);
-        listener(this.state); // Initial emit
-        return () => {
-            this.listeners = this.listeners.filter(l => l !== listener);
+    public abort() {
+        if (this.abortController) {
+            this.abortController.abort();
+            this.addLog('warn', 'Execution aborted by user.');
+            useOuroborosStore.getState().setStatus('idle');
+            this.abortController = null;
+        }
+    }
+
+    // --- SESSION MANAGEMENT ---
+
+    public async loadSession(sessionId: string = 'current_session') {
+        const project = await db.projects.get(sessionId);
+        if (project) {
+            useOuroborosStore.getState().setDocumentContent(project.documentContent);
+            useOuroborosStore.getState().setProjectPlan(project.projectPlan);
+            useOuroborosStore.getState().setManifestation(project.manifestation || null);
+            // useOuroborosStore.getState().setCouncil(project.council); // Need to implement setCouncil in store if not exists, or just update state directly
+            // For now, we manually update council if needed, or assume it's part of settings/store
+            // The store has toggleCouncilMember but not setCouncil. 
+            // We can iterate or just leave it for now as it's UI state.
+
+            // Load nodes and edges
+            const nodes = await db.nodes.toArray();
+            const edges = await db.edges.toArray();
+
+            // Update Store
+            this.updateGraph(
+                nodes.reduce((acc, n) => ({ ...acc, [n.id]: n }), {}),
+                edges.map(e => ({ source: e.source, target: e.target }))
+            );
+
+            this.addLog('system', 'Session loaded from database.');
+        }
+    }
+
+    public async saveSession(sessionId: string = 'current_session') {
+        const store = useOuroborosStore.getState();
+        await db.projects.put({
+            id: sessionId,
+            name: 'Current Session',
+            createdAt: Date.now(), // This should probably be preserved
+            updatedAt: Date.now(),
+            documentContent: store.documentContent,
+            projectPlan: store.projectPlan,
+            manifestation: store.manifestation,
+            council: store.council
+        });
+    }
+
+    public async clearSession() {
+        // Clear DB
+        await db.nodes.clear();
+        await db.edges.clear();
+        await db.logs.clear();
+        await db.memories.clear();
+        await db.knowledge_graph.clear();
+
+        // Reset Store
+        useOuroborosStore.getState().resetSession();
+
+        this.addLog('system', 'Session wiped. Tabula Rasa.');
+    }
+
+    public async exportDatabase(): Promise<string> {
+        const data = {
+            nodes: await db.nodes.toArray(),
+            edges: await db.edges.toArray(),
+            logs: await db.logs.toArray(),
+            knowledge_graph: await db.knowledge_graph.toArray(),
+            memories: await db.memories.toArray(),
+            projects: await db.projects.toArray(),
+            settings: await db.settings.toArray(),
+            version: '2.2'
         };
+        return JSON.stringify(data, null, 2);
     }
 
-    private notify() {
-        this.listeners.forEach(l => l(this.state));
-    }
+    public async importDatabase(jsonString: string) {
+        try {
+            const data = JSON.parse(jsonString);
+            if (!data.version) throw new Error("Invalid Ouroboros Export File");
 
-    // --- State Accessors ---
-    public getState(): EngineState {
-        return this.state;
-    }
+            await db.transaction('rw', [db.nodes, db.edges, db.logs, db.knowledge_graph, db.memories, db.projects, db.settings], async () => {
+                await db.nodes.clear();
+                await db.edges.clear();
+                await db.logs.clear();
+                await db.knowledge_graph.clear();
+                await db.memories.clear();
+                await db.projects.clear();
+                await db.settings.clear();
 
-    // --- UTILS ---
-    private generateId = () => Math.random().toString(36).substr(2, 9);
+                if (data.nodes) await db.nodes.bulkAdd(data.nodes);
+                if (data.edges) await db.edges.bulkAdd(data.edges);
+                if (data.logs) await db.logs.bulkAdd(data.logs);
+                if (data.knowledge_graph) await db.knowledge_graph.bulkAdd(data.knowledge_graph);
+                if (data.memories) await db.memories.bulkAdd(data.memories);
+                if (data.projects) await db.projects.bulkAdd(data.projects);
+                if (data.settings) await db.settings.bulkAdd(data.settings);
+            });
+
+            // Reload Session
+            await this.loadSession();
+            this.addLog('success', 'Database imported successfully.');
+
+        } catch (e) {
+            console.error(e);
+            this.addLog('error', 'Failed to import database: ' + e.message);
+        }
+    }
 
     // --- CORE LOGIC ---
 
     public async startRefinement(goal: string, activeDepts: string[] = ['strategy', 'ux', 'engineering', 'security']) {
         if (!goal.trim()) return;
-        this.state.isProcessing = true;
-        this.state.documentContent = goal;
-        this.state.graph = { nodes: {}, edges: [] };
-        this.state.logs = [];
-        this.state.cycleCount = 1;
-        this.notify();
+
+        // Reset Store
+        useOuroborosStore.getState().resetSession();
+        useOuroborosStore.getState().setDocumentContent(goal);
+        useOuroborosStore.getState().setOriginalRequirements(goal);
+        useOuroborosStore.getState().setStatus('thinking');
+
+        // Clear DB for new session
+        await db.nodes.clear();
+        await db.edges.clear();
+        await db.logs.clear();
+        await this.saveSession(); // Save initial state
 
         this.addLog('system', 'Summoning the Council of Experts...');
 
         // BUILD THE SQUAD GRAPH
         const nodes: Record<string, Node> = {};
         const edges: { source: string; target: string }[] = [];
-        const roundId = this.generateId().substring(0, 3);
+        const roundId = Math.random().toString(36).substr(2, 3);
         const alchemistId = `alchemist_${roundId}`;
 
         if (!this.ai) {
-            this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+            this.ai = new UnifiedLLMClient(
+                process.env.API_KEY || "",
+                process.env.OPENAI_API_KEY || ""
+            );
         }
         const ai = this.ai;
-
         // 1. Spawn The Squad (Dynamic via Prism)
-        const prismAgents = await this.prismController.analyzeTask(goal, ai, this.state.settings.model);
         const domainLeadIds: string[] = [];
 
-        activeDepts.forEach(deptKey => {
+        // PHASE 1: Create Domain Leads (Immediate Feedback)
+        const settings = useOuroborosStore.getState().settings;
+        for (const deptKey of activeDepts) {
             const leadId = `lead_${deptKey}_${roundId}`;
             domainLeadIds.push(leadId);
 
-            // Create Domain Lead
             nodes[leadId] = {
                 id: leadId, type: 'domain_lead', label: `${deptKey} Lead`,
                 persona: `Head of ${deptKey}`,
@@ -165,19 +231,35 @@ export class OuroborosEngine {
                 dependencies: [],
                 status: 'pending', output: null, depth: 1
             };
+        }
+        // Initial Render: Show Leads immediately
+        this.updateGraph(nodes, edges);
 
-            // Filter Prism agents that match this department
-            const deptAgents = prismAgents.filter(a =>
-                a.role.toLowerCase().includes(deptKey) ||
-                a.capabilities.some(c => c.includes(deptKey)) ||
-                (deptKey === 'strategy' && !['marketing', 'ux', 'engineering', 'security'].some(k => a.role.toLowerCase().includes(k))) // Fallback for strategy
-            );
+        // PHASE 2: Spawn Specialists (Incremental Update)
+        for (const deptKey of activeDepts) {
+            const leadId = `lead_${deptKey}_${roundId}`;
+
+            // Call Prism for this specific department
+            const prismModel = settings.model_prism || settings.model;
+            this.addLog('system', `Prism analyzing for ${deptKey} using model: ${prismModel}...`);
+            console.log(`[Engine] Calling Prism for ${deptKey} with model ${prismModel}`);
+
+            let deptAgents;
+            try {
+                deptAgents = await this.prismController.analyzeTask(goal, ai, prismModel, deptKey);
+                console.log(`[Engine] Prism returned ${deptAgents.length} agents for ${deptKey}`);
+            } catch (err) {
+                console.error(`[Engine] Prism failed for ${deptKey}:`, err);
+                this.addLog('error', `Prism failed for ${deptKey}. Using fallback.`);
+                deptAgents = []; // Fallback handled inside analyzeTask usually, but just in case of timeout throw
+            }
 
             const agentsToSpawn = deptAgents.length > 0 ? deptAgents : [{
                 id: `${deptKey}_default`,
                 role: `${deptKey} Specialist`,
                 persona: `You are a ${deptKey} expert.`,
-                temperature: 0.7
+                temperature: 0.7,
+                capabilities: []
             }];
 
             agentsToSpawn.forEach((agent, idx) => {
@@ -193,7 +275,10 @@ export class OuroborosEngine {
                 edges.push({ source: specId, target: leadId });
                 nodes[leadId].dependencies.push(specId);
             });
-        });
+
+            // Update Graph after EACH department is generated
+            this.updateGraph(nodes, edges);
+        }
 
         // 2. Spawn The Alchemist (Synthesizer)
         nodes[alchemistId] = {
@@ -206,31 +291,42 @@ export class OuroborosEngine {
         domainLeadIds.forEach(id => edges.push({ source: id, target: alchemistId }));
 
         // 3. Spawn The Tribunal (Voting Mechanism)
-        const judges = this.generateJudges(roundId, this.state.settings.initialJudgeCount || 3);
-
-        judges.forEach(judge => {
-            nodes[judge.id] = {
-                id: judge.id, type: 'gatekeeper', label: judge.label,
-                persona: judge.persona,
-                instruction: `Evaluate the Transmuted Spec based on ${judge.focus}.Vote 0 - 100.`,
-                dependencies: [alchemistId],
-                status: 'pending', output: null, depth: 0
-            };
-            edges.push({ source: alchemistId, target: judge.id });
-        });
+        const tribunalId = `tribunal_${roundId}`;
+        nodes[tribunalId] = {
+            id: tribunalId, type: 'gatekeeper', label: 'The Tribunal',
+            persona: 'Supreme Court of Verification',
+            instruction: 'Verify the Transmuted Spec against the Constitution. Vote PASS or FAIL.',
+            dependencies: [alchemistId],
+            status: 'pending', output: null, depth: 0
+        };
+        edges.push({ source: alchemistId, target: tribunalId });
 
         this.updateGraph(nodes, edges);
-        this.processGraph(nodes);
+
+        // Persist initial state
+        await db.transaction('rw', db.nodes, db.edges, async () => {
+            await db.nodes.bulkPut(Object.values(nodes));
+            // Edges need to be mapped to DB format if we store them
+            // For now, we rely on updateGraph to handle DB persistence or do it here
+            // updateGraph handles it.
+        });
+
+        this.processGraph();
     }
 
     public async startPlanning(goal: string) {
         if (!goal.trim()) return;
-        this.state.isProcessing = true;
-        this.state.documentContent = goal;
-        this.state.graph = { nodes: {}, edges: [] };
-        this.state.projectPlan = [];
-        this.state.logs = [];
-        this.notify();
+
+        useOuroborosStore.getState().resetSession();
+        useOuroborosStore.getState().setDocumentContent(goal);
+        useOuroborosStore.getState().setOriginalRequirements(goal);
+        useOuroborosStore.getState().setStatus('thinking');
+
+        // Clear DB for new session
+        await db.nodes.clear();
+        await db.edges.clear();
+        await db.logs.clear();
+        await this.saveSession();
 
         this.addLog('system', 'Initiating MANIFESTATION Sequence...');
 
@@ -245,30 +341,31 @@ export class OuroborosEngine {
         };
 
         this.updateGraph(initialNodes, []);
-        this.processGraph(initialNodes);
+
+        await db.nodes.put(initialNodes[rootId]);
+
+        this.processGraph();
     }
 
-    public async processGraph(initialNodes: Record<string, Node>) {
-        this.state.isProcessing = true;
-        this.notify();
+    public async processGraph() {
+        useOuroborosStore.getState().setStatus('thinking');
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
 
         let active = true;
 
-        // Initial setup
-        this.state.graph.nodes = { ...initialNodes };
-        this.state.graph.edges = this.state.graph.edges || [];
-        this.state.graph.nodes = this.calculateLayout(this.state.graph.nodes);
-        this.notify();
-
         const checkRunnable = async () => {
-            if (!active) return;
+            if (!active || signal.aborted) return;
 
-            const nodesRef = this.state.graph.nodes;
-            const pendingNodes = Object.values(nodesRef).filter(n => n.status === 'pending');
-            const runningNodes = Object.values(nodesRef).filter(n => n.status !== 'pending' && n.status !== 'complete' && n.status !== 'error');
+            // Fetch nodes from DB
+            const allNodes = await db.nodes.toArray();
+            const nodesRef: Record<string, Node> = allNodes.reduce((acc, n) => ({ ...acc, [n.id]: n }), {});
+
+            const pendingNodes = allNodes.filter(n => n.status === 'pending');
+            const runningNodes = allNodes.filter(n => n.status !== 'pending' && n.status !== 'complete' && n.status !== 'error');
 
             if (pendingNodes.length === 0 && runningNodes.length === 0) {
-                const tribunalNodes = Object.values(nodesRef).filter(n => n.type === 'gatekeeper' && n.status === 'complete');
+                const tribunalNodes = allNodes.filter(n => n.type === 'gatekeeper' && n.status === 'complete');
 
                 if (tribunalNodes.length > 0) {
                     const lastJudge = tribunalNodes[tribunalNodes.length - 1];
@@ -281,7 +378,7 @@ export class OuroborosEngine {
 
                     this.addLog('system', `[Round ${roundId}] Tribunal Consensus: ${avgScore.toFixed(1)} / 100 (Variance: ${variance.toFixed(1)})`);
 
-                    if (this.state.settings.enableMultiRoundVoting && variance > 200) {
+                    if (useOuroborosStore.getState().settings.enableMultiRoundVoting && variance > 200) {
                         const currentCount = currentRoundJudges.length;
                         let nextCount = 0;
                         if (currentCount < 5) nextCount = 5;
@@ -315,22 +412,23 @@ export class OuroborosEngine {
                             }
                         } else {
                             this.addLog('error', 'Consensus impossible after 3 rounds. Human Review Required.');
-                            this.state.documentContent += "\n\n> ⚠️ **SYSTEM ALERT**: Tribunal Consensus Failed. Human Review Required.";
-                            this.notify();
+                            useOuroborosStore.getState().setDocumentContent(useOuroborosStore.getState().documentContent + "\n\n> ⚠️ **SYSTEM ALERT**: Tribunal Consensus Failed. Human Review Required.");
+                            useOuroborosStore.getState().setStatus('idle'); // STOP EXECUTION
+                            active = false;
+                            return;
                         }
                     }
 
                     if (avgScore < 85 && Object.keys(nodesRef).length < 60) {
                         this.addLog('warn', 'Consensus weak. Ouroboros devours itself for another cycle...');
-                        this.expandRefinementGraph(nodesRef, this.state.documentContent);
+                        this.expandRefinementGraph(nodesRef, useOuroborosStore.getState().documentContent);
                         return;
                     }
                 }
 
-                this.state.isProcessing = false;
+                useOuroborosStore.getState().setStatus('idle');
                 this.addLog('success', 'Cycle Complete. The snake rests.');
                 active = false;
-                this.notify();
                 return;
             }
 
@@ -344,25 +442,33 @@ export class OuroborosEngine {
             });
 
             // Re-fetch pending nodes after updates
-            const activePending = Object.values(this.state.graph.nodes).filter(n => n.status === 'pending');
+            const activePending = await db.nodes.where('status').equals('pending').toArray();
 
             const runnable = activePending.filter(node => {
-                return node.dependencies.every(depId => this.state.graph.nodes[depId]?.status === 'complete');
+                return node.dependencies.every(depId => {
+                    const depNode = nodesRef[depId];
+                    return depNode?.status === 'complete';
+                });
             });
 
             if (runnable.length > 0) {
-                await Promise.all(runnable.map(node => this.executeNode(node.id, checkRunnable)));
+                const results = await Promise.all(runnable.map(node => this.executeNode(node.id, checkRunnable, signal)));
+                if (results.includes(false)) {
+                    active = false;
+                    useOuroborosStore.getState().setStatus('idle');
+                    this.addLog('warn', 'Execution paused for Human Review.');
+                    return;
+                }
                 checkRunnable();
             } else {
-                const runningCount = Object.values(this.state.graph.nodes).filter(n => n.status === 'running' || n.status === 'critiquing' || n.status === 'synthesizing' || n.status === 'evaluating' || n.status === 'planning').length;
+                const runningCount = Object.values(nodesRef).filter(n => n.status === 'running' || n.status === 'critiquing' || n.status === 'synthesizing' || n.status === 'evaluating' || n.status === 'planning').length;
 
                 if (activePending.length > 0 && runningCount > 0) {
                     setTimeout(checkRunnable, 1000);
                 } else if (activePending.length > 0 && runningCount === 0) {
                     this.addLog('error', 'Deadlock detected. Stopping execution.');
-                    this.state.isProcessing = false;
+                    useOuroborosStore.getState().setStatus('idle');
                     active = false;
-                    this.notify();
                 }
             }
         };
@@ -370,9 +476,24 @@ export class OuroborosEngine {
         checkRunnable();
     }
 
-    private async executeNode(nodeId: string, checkRunnableCallback: () => void) {
-        const node = this.state.graph.nodes[nodeId];
-        if (!node) return;
+    private apiKey: string | null = null;
+    private openaiApiKey: string | null = null;
+
+    public setApiKey(key: string) {
+        this.apiKey = key;
+        this.ai.updateKeys(key, undefined);
+    }
+
+    public setOpenAIKey(key: string) {
+        this.openaiApiKey = key;
+        this.ai.updateKeys(undefined, key);
+    }
+
+    private async executeNode(nodeId: string, checkRunnableCallback: () => void, signal: AbortSignal): Promise<boolean> {
+        if (signal.aborted) return false;
+
+        const node = await db.nodes.get(nodeId);
+        if (!node) return false;
 
         let status: NodeStatus = 'running';
         if (node.type === 'specialist') status = 'critiquing';
@@ -381,53 +502,61 @@ export class OuroborosEngine {
         if (node.type === 'gatekeeper') status = 'evaluating';
         if (['architect', 'tech_lead', 'estimator'].includes(node.type)) status = 'planning';
 
-        this.updateNodeState(nodeId, { status });
+        await this.updateNodeState(nodeId, { status });
 
         try {
             await this.apiSemaphore.acquire();
+            if (signal.aborted) {
+                this.apiSemaphore.release();
+                return false;
+            }
+
             await this.rateLimiter.waitForSlot();
             this.rateLimiter.recordRequest();
 
-            if (!this.ai) {
-                this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-            }
+            // Ensure keys are up to date (in case they were set via SettingsPanel but not env)
+            const googleKey = this.apiKey || process.env.API_KEY || "";
+            const openaiKey = this.openaiApiKey || process.env.OPENAI_API_KEY || "";
+            this.ai.updateKeys(googleKey || undefined, openaiKey || undefined);
+
             const ai = this.ai;
-            let selectedModel = this.state.settings.model;
+            const settings = useOuroborosStore.getState().settings;
+            let selectedModel = settings.model;
 
             // Tiered Model Selection
-            if (node.type === 'specialist' && this.state.settings.model_specialist) selectedModel = this.state.settings.model_specialist;
-            if ((node.type === 'domain_lead' || node.type === 'tech_lead') && this.state.settings.model_lead) selectedModel = this.state.settings.model_lead;
-            if (node.type === 'architect' && this.state.settings.model_architect) selectedModel = this.state.settings.model_architect;
-            if (node.type === 'synthesizer' && this.state.settings.model_synthesizer) selectedModel = this.state.settings.model_synthesizer;
-            if (node.type === 'gatekeeper' && this.state.settings.model_judge) selectedModel = this.state.settings.model_judge;
+            if (node.type === 'specialist' && settings.model_specialist) selectedModel = settings.model_specialist;
+            if ((node.type === 'domain_lead' || node.type === 'tech_lead') && settings.model_lead) selectedModel = settings.model_lead;
+            if (node.type === 'architect' && settings.model_architect) selectedModel = settings.model_architect;
+            if (node.type === 'synthesizer' && settings.model_synthesizer) selectedModel = settings.model_synthesizer;
+            if (node.type === 'gatekeeper' && settings.model_judge) selectedModel = settings.model_judge;
 
-            const dependencyOutputs = node.dependencies.map(d => {
-                const depNode = this.state.graph.nodes[d];
+            const dependencyOutputs = await Promise.all(node.dependencies.map(async d => {
+                const depNode = await db.nodes.get(d);
+                if (!depNode) return "";
                 const scoreStr = depNode.score ? `[Confidence: ${depNode.score}%]` : '';
                 return `FROM [${depNode.label}] ${scoreStr}:\n${depNode.output}`;
-            }).join('\n\n');
+            }));
+            const dependencyOutputsStr = dependencyOutputs.join('\n\n');
 
             // --- MDAP: Memory Injection ---
             let instructionContext = node.instruction;
-            if (this.state.settings.enableAgentMemory) {
-                instructionContext = this.memoryManager.injectMemoryContext(node.persona, instructionContext);
+            if (settings.enableAgentMemory) {
+                instructionContext = await this.memoryManager.injectMemoryContext(node.persona, instructionContext);
             }
 
             let resultText = "";
-            let score = 0;
             let resultData: any = null;
+            let score = 0;
 
             // --- MDAP: Retry Loop for Red Flagging ---
             let attempts = 0;
-            const maxAttempts = this.state.settings.enableRedFlagging ? 3 : 1;
+            const maxAttempts = settings.enableRedFlagging ? 3 : 1;
             let currentTemp = 0.7;
             let executionValid = false;
 
             while (attempts < maxAttempts && !executionValid) {
                 attempts++;
-
                 const generationConfig = {
-                    responseMimeType: "application/json",
                     temperature: node.data?.temperature || currentTemp
                 };
 
@@ -439,7 +568,7 @@ export class OuroborosEngine {
                     
                     THE PRIMA MATERIA (SPEC):
                     """
-                    ${this.state.documentContent}
+                    ${useOuroborosStore.getState().documentContent}
                     """
                     
                     YOUR LENS: ${instructionContext}
@@ -471,7 +600,7 @@ export class OuroborosEngine {
                         contents: `You are: ${node.persona}.
                     
                     YOUR SPECIALISTS' INSIGHTS (Divergent Views):
-                    ${dependencyOutputs}
+                    ${dependencyOutputsStr}
                     
                     TASK: ${instructionContext}
                     
@@ -494,7 +623,7 @@ export class OuroborosEngine {
                     resultData = this.extractJson(resp.text || "{}");
                     resultText = resultData?.summary || "Synthesis failed.";
 
-                    this.updateNodeState(nodeId, {
+                    await this.updateNodeState(nodeId, {
                         artifacts: {
                             specification: resultData?.specification,
                             code: resultData?.code,
@@ -510,19 +639,29 @@ export class OuroborosEngine {
                     
                     THE OLD MATTER:
                     """
-                    ${this.state.documentContent}
+                    ${useOuroborosStore.getState().documentContent}
                     """
                     
                     THE COUNCIL'S DECREES (Domain Strategies):
-                    ${dependencyOutputs}
+                    ${dependencyOutputsStr}
                     
                     TASK: ${instructionContext}
+                    
                     Rewrite the Prima Materia to incorporate ALL valid insights. Make it seamless.
-                    Return the FULL Markdown document.`
+                    Return the FULL Markdown document.
+                    
+                    CRITICAL: Do not summarize. Retain all technical details, constraints, and logic provided by the specialists.
+                    
+                    Structure the document with:
+                    1. **Architecture Overview** (Mermaid diagrams if applicable)
+                    2. **Core Algorithms & Logic** (Pseudocode/Python)
+                    3. **Data Structures** (JSON/Schemas)
+                    4. **User Experience Flow** (Step-by-step)
+                    
+                    Avoid marketing fluff. Prioritize engineering density.`
                     });
-                    resultText = resp.text || this.state.documentContent;
-                    this.state.documentContent = resultText;
-                    this.notify();
+                    resultText = resp.text || useOuroborosStore.getState().documentContent;
+                    useOuroborosStore.getState().setDocumentContent(resultText);
                     this.addLog('success', `Transmutation Complete`, nodeId);
 
                 } else if (node.type === 'gatekeeper') {
@@ -531,49 +670,26 @@ export class OuroborosEngine {
                     const roundMatch = nodeId.match(/_([^_]+)$/);
                     const currentRoundId = roundMatch ? roundMatch[1] : '';
 
-                    const synthesizerNode = Object.values(this.state.graph.nodes).find((n: Node) => n.type === 'synthesizer' && n.id.includes(currentRoundId)) as Node | undefined;
+                    const nodesRef = (await db.nodes.toArray()).reduce((acc, n) => ({ ...acc, [n.id]: n }), {} as Record<string, Node>);
+                    const synthesizerNode = Object.values(nodesRef).find((n: Node) => n.type === 'synthesizer' && n.id.includes(currentRoundId)) as Node | undefined;
                     const artifacts = synthesizerNode?.artifacts;
 
                     let specToVerify = instructionContext;
-                    if (artifacts) {
+                    if (artifacts && artifacts.specification) {
                         specToVerify = `
                         CODE:
-                        ${artifacts.code}
+                        ${artifacts.code || "N/A"}
                         
                         SPECIFICATION:
                         ${artifacts.specification}
                         
                         PROOF:
-                        ${artifacts.proof}
+                        ${artifacts.proof || "N/A"}
                         `;
+                    } else if (synthesizerNode && synthesizerNode.output) {
+                        // Fallback to full output if artifacts are missing (e.g. Alchemist)
+                        specToVerify = synthesizerNode.output;
                     }
-
-                    // OPTIMISTIC EXECUTION (DISABLED for Stability)
-                    // User reported stalling and this feature was not in the original stable build.
-                    let speculativeNodeId: string | null = null;
-                    /* 
-                    if (score === 0) {
-                        const prediction = await this.prismController.predictNextStep(this.state.documentContent, instructionContext, ai, selectedModel);
-                        if (prediction) {
-                            speculativeNodeId = prediction.id;
-                            this.addLog('system', `🔮 Optimistic Execution: Spawning ${prediction.title}...`, nodeId);
-
-                            const specNode: Node = {
-                                id: prediction.id,
-                                type: 'tech_lead',
-                                label: prediction.title,
-                                persona: 'Speculative Executor',
-                                instruction: prediction.instruction,
-                                dependencies: [nodeId],
-                                status: 'running',
-                                output: null,
-                                depth: (node.depth || 0) + 1
-                            };
-
-                            this.updateGraph({ [specNode.id]: specNode }, [{ source: nodeId, target: specNode.id }]);
-                        }
-                    }
-                    */
 
                     const votingResult = await this.votingSystem.conductVoting(
                         specToVerify,
@@ -584,7 +700,8 @@ export class OuroborosEngine {
                             cheap: "gemini-1.5-flash",
                             advanced: "gemini-1.5-pro"
                         },
-                        "Verify this artifact set. Check for Logic, Requirements, and Proof validity."
+                        "Verify this artifact set. Check for Logic, Requirements, and Proof validity.",
+                        useOuroborosStore.getState().originalRequirements
                     );
 
                     resultText = formatVotingResult(votingResult);
@@ -592,30 +709,40 @@ export class OuroborosEngine {
                     resultData = votingResult;
 
                     if (votingResult.requiresHumanReview || score <= 70) {
-                        // ROLLBACK
-                        if (speculativeNodeId) {
-                            this.addLog('warn', `Verification Failed. Rolling back speculative node ${speculativeNodeId}...`, nodeId);
-                            const newNodes = { ...this.state.graph.nodes };
-                            delete newNodes[speculativeNodeId!];
-                            const newEdges = this.state.graph.edges.filter(e => e.target !== speculativeNodeId && e.source !== speculativeNodeId);
-                            this.state.graph.nodes = newNodes;
-                            this.state.graph.edges = newEdges;
-                            this.notify();
-                        }
-
-                        // RECURSIVE DECOMPOSITION
+                        // RECURSIVE DECOMPOSITION / AUTO-CORRECTION
                         if (this.prismController.shouldDecompose(nodeId)) {
-                            this.addLog('warn', `Verification Failed > 2 times. Triggering Recursive Decomposition...`, nodeId);
-                            const subTasks = await this.prismController.decomposeTask(nodeId, this.state.documentContent, ai, selectedModel);
 
-                            if (subTasks.length > 0) {
-                                this.addLog('system', `Decomposed into ${subTasks.length} micro-tasks. Spawning new agents...`, nodeId);
-                                this.expandPlanningTree(nodeId, subTasks, 'tasks', (node.depth || 0) + 1);
+                            if (votingResult.requiresHumanReview) {
+                                // VETO: Trigger Auto-Correction
+                                this.addLog('warn', `VETO Triggered. Initiating Recursive Auto-Correction...`, nodeId);
+                                const vetoReason = votingResult.judgeOutputs.find((j: any) => j.score === 0)?.reasoning || "Unknown Veto";
+                                const correction = await this.prismController.analyzeVeto(vetoReason, useOuroborosStore.getState().documentContent, ai, selectedModel);
+
+                                await this.triggerCorrectionLoop(nodeId, vetoReason, correction.correctionPlan, correction.suggestedAgents);
                                 this.prismController.resetFailureCount(nodeId);
                                 executionValid = true;
+
                             } else {
-                                this.addLog('error', 'Decomposition failed. Escalating to human review.', nodeId);
+                                // Standard Decomposition (Low Score)
+                                this.addLog('warn', `Verification Failed > 2 times. Triggering Recursive Decomposition...`, nodeId);
+                                const subTasks = await this.prismController.decomposeTask(nodeId, useOuroborosStore.getState().documentContent, ai, selectedModel);
+
+                                if (subTasks.length > 0) {
+                                    this.addLog('system', `Decomposed into ${subTasks.length} micro-tasks. Spawning new agents...`, nodeId);
+                                    this.expandPlanningTree(nodeId, subTasks, 'tasks', (node.depth || 0) + 1);
+                                    this.prismController.resetFailureCount(nodeId);
+                                    executionValid = true;
+                                } else {
+                                    this.addLog('error', 'Decomposition failed. Escalating to human review.', nodeId);
+                                }
                             }
+                        }
+
+                        // Pause execution if human review is required AND we didn't auto-correct
+                        if (votingResult.requiresHumanReview && !executionValid) {
+                            this.apiSemaphore.release();
+                            await this.updateNodeState(nodeId, { status: 'complete', output: resultText, score: score, data: resultData });
+                            return false;
                         }
                     }
                 } else if (node.type === 'architect') {
@@ -626,7 +753,7 @@ export class OuroborosEngine {
                         
                         THE SPECIFICATION:
                         """
-                        ${this.state.documentContent}
+                        ${useOuroborosStore.getState().documentContent}
                         """
                         
                         TASK: ${instructionContext}
@@ -642,64 +769,46 @@ export class OuroborosEngine {
                     });
 
                     resultData = this.extractJson(resp.text || "{}");
-                    const modules = resultData?.modules || [];
-                    resultText = `Architected ${modules.length} domains: ${modules.map((m: any) => m.title).join(', ')}`;
+                    resultText = "Architecture Defined.";
 
-                    if (modules.length > 0) {
-                        this.expandPlanningTree(nodeId, modules, 'modules', (node.depth || 0) + 1);
-                    } else {
-                        this.addLog('error', 'Architect failed to generate modules.', nodeId);
+                    if (resultData?.modules) {
+                        this.expandPlanningTree(nodeId, resultData.modules, 'modules', (node.depth || 0) + 1);
                     }
-                    score = 90;
-
                 } else if (node.type === 'tech_lead') {
-                    this.addLog('system', `${node.label} is breaking down tasks...`, nodeId);
+                    this.addLog('system', `${node.label} is planning tasks...`, nodeId);
                     const resp = await ai.models.generateContent({
                         model: selectedModel,
                         contents: `You are: ${node.persona}.
                         
                         THE SPECIFICATION:
                         """
-                        ${this.state.documentContent}
+                        ${useOuroborosStore.getState().documentContent}
                         """
                         
                         TASK: ${instructionContext}
-                        Break this domain down into granular, actionable tasks.
-                        Tasks should be ordered by dependency (build order).
+                        Break this domain down into 3-5 specific, actionable development tasks.
                         
                         Return JSON:
                         {
                             "tasks": [
-                                { "id": "string (unique)", "title": "string", "instruction": "detailed instruction", "minimalContext": "string" }
+                                { "id": "string (unique)", "title": "string", "instruction": "string", "minimalContext": "string" }
                             ]
                         }`,
                         config: { responseMimeType: "application/json" }
                     });
 
                     resultData = this.extractJson(resp.text || "{}");
-                    const tasks = resultData?.tasks || [];
-                    resultText = `Generated ${tasks.length} tasks for ${node.label}.`;
+                    resultText = "Domain Planning Complete.";
 
-                    if (tasks.length > 0) {
-                        this.expandPlanningTree(nodeId, tasks, 'tasks', (node.depth || 0) + 1);
-                    } else {
-                        this.addLog('error', 'Tech Lead failed to generate tasks.', nodeId);
+                    if (resultData?.tasks) {
+                        this.expandPlanningTree(nodeId, resultData.tasks, 'tasks', (node.depth || 0) + 1);
                     }
-                    score = 85;
-
-                } else {
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: `You are: ${node.persona}. TASK: ${instructionContext}`
-                    });
-                    resultText = resp.text || "";
-                    score = 80;
                 }
 
                 // --- MDAP: Red Flag Validation ---
-                if (this.state.settings.enableRedFlagging) {
+                if (settings.enableRedFlagging) {
                     const validation = this.redFlagValidator.validate(resultText, score);
-                    this.updateNodeState(nodeId, { redFlags: validation.flags });
+                    await this.updateNodeState(nodeId, { redFlags: validation.flags });
 
                     if (!validation.passed) {
                         this.addLog('warn', `Red Flags: ${validation.flags.map(f => f.type).join(', ')} `, nodeId);
@@ -707,6 +816,14 @@ export class OuroborosEngine {
                             const retryMsg = await this.redFlagValidator.retry(nodeId, validation.suggestedTemperature || currentTemp);
                             this.addLog('warn', retryMsg, nodeId);
                             if (retryMsg.includes("ESCALATED")) {
+                                this.addLog('warn', `Red Flags Escalated. Spawning Quality Control Agent...`, nodeId);
+                                const fixTask = {
+                                    id: `${nodeId}_qc_fix`,
+                                    title: `Fix Red Flags for ${node.label}`,
+                                    instruction: `The previous output failed validation:\n${validation.flags.map(f => f.message).join('\n')}\n\nFix the output to adhere to quality standards.`,
+                                    minimalContext: resultText
+                                };
+                                this.expandPlanningTree(nodeId, [fixTask], 'tasks', (node.depth || 0) + 1);
                                 executionValid = true;
                             } else {
                                 currentTemp = validation.suggestedTemperature || currentTemp;
@@ -739,7 +856,7 @@ export class OuroborosEngine {
                     {
                         persona: node.persona,
                         instruction: node.instruction,
-                        cycle: 1, // TODO: Pass cycle count
+                        cycle: 1,
                         artifacts: node.artifacts
                     }
                 );
@@ -750,18 +867,28 @@ export class OuroborosEngine {
             }
 
             // --- MDAP: Store Memory ---
-            if (this.state.settings.enableAgentMemory) {
-                await this.memoryManager.storeMemory(node.persona, {
-                    cycle: 1, // TODO: Pass cycle count
+            if (settings.enableAgentMemory) {
+                const memoryItem = {
+                    cycle: 1,
                     feedback: resultText.substring(0, 100) + "...",
                     outcomeScore: score,
                     timestamp: Date.now(),
                     adopted: true
-                }, ai, selectedModel, this.state.settings.enableMultiRoundVoting ? this.votingSystem : undefined);
+                };
+
+                await this.memoryManager.storeMemory(node.persona, {
+                    ...memoryItem,
+                    agentId: node.persona // Ensure agentId is set for DB
+                }, ai, selectedModel, settings.enableMultiRoundVoting ? this.votingSystem : undefined);
+
+                // Update Node Memory in DB for UI
+                const currentMemory = node.memory || [];
+                await this.updateNodeState(nodeId, { memory: [...currentMemory, memoryItem] });
             }
 
             this.apiSemaphore.release();
-            this.updateNodeState(nodeId, { status: 'complete', output: resultText, score: score, data: resultData });
+            await this.updateNodeState(nodeId, { status: 'complete', output: resultText, score: score, data: resultData });
+            return true;
 
         } catch (e) {
             console.error(e);
@@ -770,22 +897,22 @@ export class OuroborosEngine {
 
             if (err.message.includes("quota") || err.message.includes("429")) {
                 this.addLog('warn', "Quota Limit Hit (429). Pausing for 60s before retrying...", nodeId);
-                this.updateNodeState(nodeId, { status: 'pending' });
+                await this.updateNodeState(nodeId, { status: 'pending' });
                 await new Promise(resolve => setTimeout(resolve, 60000));
-                return this.executeNode(nodeId, checkRunnableCallback);
+                return this.executeNode(nodeId, checkRunnableCallback, signal);
             }
 
             this.addLog('error', err.message, nodeId);
-            this.updateNodeState(nodeId, { status: 'error', output: err.message });
+            await this.updateNodeState(nodeId, { status: 'error', output: err.message });
 
             if (this.prismController.shouldDecompose(nodeId)) {
                 this.addLog('warn', `Task ${node.label} failed repeatedly. Triggering Recursive Decomposition...`, nodeId);
 
                 const subTasks = await this.prismController.decomposeTask(
                     nodeId,
-                    this.state.documentContent,
+                    useOuroborosStore.getState().documentContent,
                     this.ai!,
-                    this.state.settings.model
+                    useOuroborosStore.getState().settings.model
                 );
 
                 if (subTasks.length > 0) {
@@ -796,36 +923,50 @@ export class OuroborosEngine {
                     this.addLog('error', 'Decomposition failed. Escalating to human review.', nodeId);
                 }
             }
+            return false;
         }
     }
-
-    // Helper to add logs
-    private addLog(level: LogEntry['level'], message: string, nodeId?: string) {
-        const newLog: LogEntry = {
+    private async addLog(level: LogEntry['level'], message: string, nodeId?: string) {
+        const log = {
             id: Math.random().toString(36).substr(2, 9),
             timestamp: new Date().toLocaleTimeString(),
             level,
             message,
             nodeId
         };
-        this.state.logs = [newLog, ...this.state.logs];
-        this.notify();
+        await db.logs.add(log);
     }
 
     // --- HELPER METHODS ---
 
-    private updateNodeState(id: string, updates: Partial<Node>) {
-        if (!this.state.graph.nodes[id]) return;
-        this.state.graph.nodes[id] = { ...this.state.graph.nodes[id], ...updates };
-        this.notify();
+    private async updateNodeState(id: string, updates: Partial<Node>) {
+        await db.nodes.update(id, updates);
+        // Store update removed as we rely on DB + useLiveQuery
     }
 
-    private updateGraph(newNodes: Record<string, Node>, newEdges: { source: string, target: string }[]) {
-        const mergedNodes = { ...this.state.graph.nodes, ...newNodes };
-        const mergedEdges = [...this.state.graph.edges, ...newEdges];
-        this.state.graph.nodes = this.calculateLayout(mergedNodes);
-        this.state.graph.edges = mergedEdges;
-        this.notify();
+    private async updateGraph(newNodes: Record<string, Node>, newEdges: { source: string, target: string }[]) {
+        // 1. Fetch ALL existing nodes from DB to merge with newNodes for layout
+        const existingNodesArr = await db.nodes.toArray();
+        const existingNodes = existingNodesArr.reduce((acc, n) => ({ ...acc, [n.id]: n }), {} as Record<string, Node>);
+
+        // 2. Merge
+        const mergedNodes = { ...existingNodes, ...newNodes };
+
+        // 3. Calculate Layout
+        const layoutedNodes = this.calculateLayout(mergedNodes);
+
+        // 4. Persist to DB
+        await db.transaction('rw', db.nodes, db.edges, async () => {
+            // Update all nodes with new layout
+            await db.nodes.bulkPut(Object.values(layoutedNodes));
+
+            for (const edge of newEdges) {
+                const exists = await db.edges.where('source').equals(edge.source).and(e => e.target === edge.target).first();
+                if (!exists) {
+                    await db.edges.add({ source: edge.source, target: edge.target, type: 'dependency' });
+                }
+            }
+        });
     }
 
     private extractJson(text: string) {
@@ -837,7 +978,7 @@ export class OuroborosEngine {
         }
     }
 
-    private expandPlanningTree(parentId: string, items: any[], type: 'modules' | 'tasks', depth: number) {
+    private async expandPlanningTree(parentId: string, items: any[], type: 'modules' | 'tasks', depth: number) {
         const newNodes: Record<string, Node> = {};
         const newEdges: { source: string, target: string }[] = [];
         const newPlanItems: PlanItem[] = [];
@@ -852,12 +993,19 @@ export class OuroborosEngine {
                 confidence: 0,
                 status: 'pending' as NodeStatus
             }));
-            this.updateNodeState(parentId, { microTasks });
+            await this.updateNodeState(parentId, { microTasks });
         }
+
+        // Fetch existing nodes to prevent duplicates
+        const existingNodesArr = await db.nodes.toArray();
+        const existingNodeIds = new Set(existingNodesArr.map(n => n.id));
+        const existingNodeLabels = new Set(existingNodesArr.map(n => n.label));
 
         items.forEach((item: any) => {
             if (type === 'modules') {
                 const nodeId = `lead_${item.id}`;
+                if (existingNodeIds.has(nodeId)) return; // Skip if ID exists
+
                 newNodes[nodeId] = {
                     id: nodeId, type: 'tech_lead', label: `Domain: ${item.title.substring(0, 10)}...`,
                     persona: `Domain Keeper (${item.title})`,
@@ -876,10 +1024,18 @@ export class OuroborosEngine {
 
             } else if (type === 'tasks') {
                 const nodeId = item.id;
+                const label = item.minimalContext || item.title;
+
+                // Deduplication check: ID or Label
+                if (existingNodeIds.has(nodeId) || existingNodeLabels.has(label)) {
+                    this.addLog('warn', `Skipping duplicate task: ${label}`, parentId);
+                    return;
+                }
+
                 newNodes[nodeId] = {
                     id: nodeId,
                     type: 'specialist',
-                    label: item.minimalContext || item.title,
+                    label: label,
                     persona: 'Micro-Agent Specialist',
                     instruction: item.instruction,
                     dependencies: [parentId],
@@ -901,28 +1057,27 @@ export class OuroborosEngine {
         this.updateGraph(newNodes, newEdges);
 
         // Update Project Plan
+        const store = useOuroborosStore.getState();
+        let currentPlan = store.projectPlan;
+
         if (type === 'modules') {
-            this.state.projectPlan = [...this.state.projectPlan, ...newPlanItems];
-        } else if (type === 'tasks') {
-            this.state.projectPlan = this.state.projectPlan.map(module => {
-                if (module.id === parentId) {
-                    return {
-                        ...module,
-                        children: [...(module.children || []), ...newPlanItems]
-                    };
+            currentPlan = [...currentPlan, ...newPlanItems];
+        } else {
+            // Find parent module and add children
+            currentPlan = currentPlan.map(item => {
+                if (item.id === parentId || item.id === `lead_${parentId}`) {
+                    return { ...item, children: [...(item.children || []), ...newPlanItems] };
                 }
-                return module;
+                return item;
             });
         }
-        this.notify();
+
+        store.setProjectPlan(currentPlan);
     }
 
     private expandRefinementGraph(currentNodes: Record<string, Node>, currentDoc: string) {
-        this.state.cycleCount++;
-        const roundId = `cycle${this.state.cycleCount}`; // e.g. cycle2
+        const roundId = Math.random().toString(36).substr(2, 4);
         const prevAlchemist = Object.values(currentNodes).find(n => n.type === 'synthesizer' && n.status === 'complete');
-
-        // If no alchemist found (shouldn't happen), try to find the last complete node to attach to
         const anchorNode = prevAlchemist || Object.values(currentNodes).filter(n => n.status === 'complete').pop();
 
         if (!anchorNode) {
@@ -935,12 +1090,7 @@ export class OuroborosEngine {
         const newNodes: Record<string, Node> = {};
         const newEdges: { source: string; target: string }[] = [];
         const alchemistId = `alchemist_${roundId}`;
-
-        // For now, we don't have 'selectedDepts' in state, so we'll just assume some defaults or reuse existing logic
-        // TODO: Add selectedDepts to EngineState if needed, or pass it in.
-        // For this refactor, let's assume we re-spawn based on the previous structure or a default set.
         const defaultDepts = ['strategy', 'ux', 'engineering', 'security'];
-
         const domainLeadIds: string[] = [];
 
         defaultDepts.forEach(deptKey => {
@@ -959,28 +1109,200 @@ export class OuroborosEngine {
         });
 
         newNodes[alchemistId] = {
-            id: alchemistId, type: 'synthesizer', label: `Alchemist v${this.state.cycleCount}`,
+            id: alchemistId, type: 'synthesizer', label: `Alchemist v${roundId}`,
             persona: 'Grand Architect',
             instruction: 'Refine the matter again. Higher density. Address Tribunal concerns.',
             dependencies: domainLeadIds, status: 'pending', output: null, depth: 0
         };
         domainLeadIds.forEach(id => newEdges.push({ source: id, target: alchemistId }));
 
-        const judges = this.generateJudges(roundId, this.state.settings.initialJudgeCount || 3);
-        judges.forEach(j => {
-            newNodes[j.id] = {
-                id: j.id, type: 'gatekeeper', label: j.label,
-                persona: j.persona,
-                instruction: `Re-evaluate based on ${j.focus}. Vote 0-100.`,
-                dependencies: [alchemistId], status: 'pending', output: null, depth: 0
-            };
-            newEdges.push({ source: alchemistId, target: j.id });
-        });
+        const tribunalId = `tribunal_${roundId}`;
+        newNodes[tribunalId] = {
+            id: tribunalId, type: 'gatekeeper', label: 'The Tribunal',
+            persona: 'Supreme Court of Verification',
+            instruction: 'Re-evaluate the spec. Vote PASS or FAIL.',
+            dependencies: [alchemistId], status: 'pending', output: null, depth: 0
+        };
+        newEdges.push({ source: alchemistId, target: tribunalId });
 
         this.updateGraph(newNodes, newEdges);
+        this.processGraph();
+    }
 
-        // RESTART THE ENGINE LOOP
-        this.processGraph(this.state.graph.nodes);
+    private async triggerCorrectionLoop(
+        anchorNodeId: string,
+        vetoReason: string,
+        correctionPlan: string,
+        suggestedAgents: any[]
+    ) {
+        const roundId = Math.random().toString(36).substr(2, 4);
+        this.addLog('warn', `VETO Enforced. Spawning Correction Squad (Round ${roundId})...`, anchorNodeId);
+
+        const newNodes: Record<string, Node> = {};
+        const newEdges: { source: string; target: string }[] = [];
+        const alchemistId = `alchemist_${roundId}`;
+        const leadId = `lead_correction_${roundId}`;
+
+        // 1. Create Correction Lead
+        newNodes[leadId] = {
+            id: leadId, type: 'domain_lead', label: `Correction Lead`,
+            persona: `Correction Supervisor`,
+            department: 'correction',
+            instruction: `Review the correction insights. Synthesize a fix for the VETO: "${vetoReason}". Plan: ${correctionPlan}`,
+            dependencies: [anchorNodeId],
+            status: 'pending', output: null, depth: 1
+        };
+        newEdges.push({ source: anchorNodeId, target: leadId });
+
+        // 2. Spawn Correction Specialists
+        const agents = suggestedAgents.length > 0 ? suggestedAgents : [{
+            id: 'fixer_default', role: 'Correction Specialist', persona: 'You are a technical fixer.', temperature: 0.5
+        }];
+
+        agents.forEach((agent, idx) => {
+            const specId = `correction_${agent.id}_${idx}_${roundId}`;
+            newNodes[specId] = {
+                id: specId, type: 'specialist', label: agent.role,
+                persona: agent.persona,
+                department: 'correction',
+                instruction: `Implement the Correction Plan: ${correctionPlan}`,
+                dependencies: [anchorNodeId],
+                status: 'pending', output: null, depth: 2,
+                data: { temperature: agent.temperature }
+            };
+            newEdges.push({ source: anchorNodeId, target: specId });
+            newEdges.push({ source: specId, target: leadId });
+            newNodes[leadId].dependencies.push(specId);
+        });
+
+        // 3. Spawn Alchemist
+        newNodes[alchemistId] = {
+            id: alchemistId, type: 'synthesizer', label: `Alchemist v${roundId}`,
+            persona: 'Grand Architect',
+            instruction: 'Integrate the correction into the Prima Materia. Ensure the VETO is resolved.',
+            dependencies: [leadId], status: 'pending', output: null, depth: 0
+        };
+        newEdges.push({ source: leadId, target: alchemistId });
+
+        // 4. Spawn Tribunal
+        const tribunalId = `tribunal_correction_${roundId}`;
+        newNodes[tribunalId] = {
+            id: tribunalId, type: 'gatekeeper', label: 'Correction Tribunal',
+            persona: 'Supreme Court of Verification',
+            instruction: `Verify the correction. VETO was: "${vetoReason}". Vote 0-100.`,
+            dependencies: [alchemistId], status: 'pending', output: null, depth: 0
+        };
+        newEdges.push({ source: alchemistId, target: tribunalId });
+
+        this.updateGraph(newNodes, newEdges);
+        this.processGraph();
+    }
+
+    // --- MANIFESTATION & EXPORT ---
+
+    public async generateManifestation() {
+        const store = useOuroborosStore.getState();
+        const plan = store.projectPlan;
+
+        if (!plan || plan.length === 0) {
+            this.addLog('warn', 'No project plan to manifest.');
+            return;
+        }
+
+        this.addLog('system', 'Generating Manifestation Sequence...');
+        useOuroborosStore.getState().setStatus('thinking');
+
+        try {
+            const settings = await db.settings.get(1) || {} as AppSettings;
+            const model = settings.model_manifestation || settings.model || 'gemini-2.0-flash-exp';
+
+            const prompt = `
+            You are the MANIFESTATION ENGINE.
+            
+            PROJECT:
+            """
+            ${store.documentContent}
+            """
+            
+            IDENTIFIED PLAN:
+            ${JSON.stringify(plan, null, 2)}
+            
+            TASK:
+            Transform this plan into a "MANIFESTATION.md" file.
+            This is a step-by-step implementation guide, ordered from foundational to advanced.
+            
+            FORMAT:
+            # Manifestation: [Project Name]
+            
+            ## Phase 1: Foundation
+            - [ ] Step 1...
+            - [ ] Step 2...
+            
+            ## Phase 2: Core Logic
+            ...
+            
+            Ensure the steps are actionable and follow the "Crystal Core" (Local-First) philosophy.
+            `;
+
+            const resp = await this.ai!.models.generateContent({
+                model: model,
+                contents: prompt
+            });
+
+            const manifestation = resp.text || "Failed to generate manifestation.";
+            useOuroborosStore.getState().setManifestation(manifestation);
+            this.addLog('success', 'Manifestation Sequence Generated.');
+
+        } catch (e) {
+            console.error(e);
+            this.addLog('error', 'Failed to generate manifestation.');
+        } finally {
+            useOuroborosStore.getState().setStatus('idle');
+        }
+    }
+
+    public async downloadProject() {
+        const store = useOuroborosStore.getState();
+
+        const primaMateria = store.documentContent;
+        const manifestation = store.manifestation || "Manifestation not generated.";
+        const plan = JSON.stringify(store.projectPlan, null, 2);
+        const dbExport = await this.exportDatabase();
+
+        const projectBible = `
+# PROJECT BIBLE: ${new Date().toISOString().split('T')[0]}
+
+## PRIMA MATERIA (The Vision)
+${primaMateria}
+
+---
+
+## MANIFESTATION (The Path)
+${manifestation}
+
+---
+
+## RAW PLAN (The Structure)
+\`\`\`json
+${plan}
+\`\`\`
+        `;
+
+        // Download Project Bible
+        const blob = new Blob([projectBible], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `PROJECT_BIBLE_${new Date().toISOString().split('T')[0]}.md`;
+        a.click();
+
+        // Download DB Export
+        const dbBlob = new Blob([dbExport], { type: 'application/json' });
+        const dbUrl = URL.createObjectURL(dbBlob);
+        const b = document.createElement('a');
+        b.href = dbUrl;
+        b.download = `ouroboros_db_${new Date().toISOString().split('T')[0]}.json`;
+        b.click();
     }
 
     private generateJudges(roundId: string, count: number) {
