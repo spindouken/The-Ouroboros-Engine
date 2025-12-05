@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useEffect } from 'react';
 import ReactFlow, {
     Background,
     Controls,
@@ -10,37 +10,41 @@ import ReactFlow, {
     Connection,
     applyNodeChanges,
     applyEdgeChanges,
-    addEdge
+    addEdge,
+    useReactFlow
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import AgentNode from './nodes/AgentNode';
+import { calculateLayout } from '../utils/graphLayout';
+import { LayoutGrid } from 'lucide-react';
 
 const nodeTypes: NodeTypes = {
     agentNode: AgentNode,
 };
 
+import { AppMode } from '../types';
+
 interface FlowCanvasProps {
     onNodeClick?: (nodeId: string) => void;
+    appMode: AppMode;
 }
 
-export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick }) => {
+export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick, appMode }) => {
     // Local-First: Query DB directly
     const dbNodes = useLiveQuery(() => db.nodes.toArray()) || [];
     const dbEdges = useLiveQuery(() => db.edges.toArray()) || [];
 
+    const filteredNodes = useMemo(() => dbNodes.filter(n => n.mode === appMode), [dbNodes, appMode]);
+
     // Map DB nodes to ReactFlow nodes
-    const nodes = useMemo(() => dbNodes.map(n => ({
+    const nodes = useMemo(() => filteredNodes.map(n => ({
         id: n.id,
         type: 'agentNode',
         position: { x: n.x || 0, y: n.y || 0 },
         data: n,
-        // We can sync selection if we store it in DB, or let ReactFlow handle it locally (uncontrolled)
-        // For now, let's assume selection is transient or we need a local state for it if we want to control it.
-        // But ReactFlow works best if we pass 'selected' prop if we want to control it.
-        // Let's stick to basic mapping for now.
-    })), [dbNodes]);
+    })), [filteredNodes]);
 
     // Map DB edges to ReactFlow edges
     const edges = useMemo(() => dbEdges.map(e => ({
@@ -58,7 +62,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick }) => {
                 // Persist position to DB
                 db.nodes.update(change.id, { x: change.position.x, y: change.position.y });
             }
-            // We could handle selection persistence here if we added 'selected' to DB schema
         });
     }, []);
 
@@ -66,8 +69,6 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick }) => {
         // Handle edge deletion
         changes.forEach(change => {
             if (change.type === 'remove') {
-                // We need to find the edge ID in DB. 
-                // Our mapped ID is `e-${e.id}`.
                 const dbId = parseInt(change.id.replace('e-', ''));
                 if (!isNaN(dbId)) {
                     db.edges.delete(dbId);
@@ -85,6 +86,31 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick }) => {
             });
         }
     }, []);
+
+    const handleAutoLayout = useCallback(async () => {
+        // We need to pass ALL nodes/edges relevant to the layout, which is filteredNodes
+        // But calculateLayout expects Node[], Edge[].
+        // We need to filter edges too.
+        const relevantNodeIds = new Set(filteredNodes.map(n => n.id));
+        const relevantEdges = dbEdges.filter(e => relevantNodeIds.has(e.source) && relevantNodeIds.has(e.target));
+
+        const layoutedNodes = calculateLayout(filteredNodes, relevantEdges, appMode);
+
+        await db.transaction('rw', db.nodes, async () => {
+            for (const node of layoutedNodes) {
+                await db.nodes.update(node.id, { x: node.x, y: node.y });
+            }
+        });
+    }, [filteredNodes, dbEdges, appMode]);
+
+    // Auto-layout on initial load if nodes are unpositioned
+    useEffect(() => {
+        const unpositioned = filteredNodes.filter(n => (!n.x && n.x !== 0) || (!n.y && n.y !== 0));
+        // If more than 50% are unpositioned, run layout
+        if (filteredNodes.length > 0 && unpositioned.length > filteredNodes.length / 2) {
+            handleAutoLayout();
+        }
+    }, [filteredNodes.length, appMode]); // Run when count changes or mode changes
 
     const proOptions = { hideAttribution: true };
 
@@ -121,9 +147,18 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick }) => {
                     maskColor="rgba(0, 0, 0, 0.7)"
                 />
 
-                {/* Overlay Status */}
-                <Panel position="top-right" className="bg-black/60 backdrop-blur px-4 py-2 rounded border border-emerald-900/30 text-xs text-emerald-400 font-mono">
-                    ACTIVE NODES: {nodes.filter(n => n.data.status === 'running').length} / {nodes.length}
+                {/* Overlay Status & Controls */}
+                <Panel position="top-right" className="flex gap-2">
+                    <div className="bg-black/60 backdrop-blur px-4 py-2 rounded border border-emerald-900/30 text-xs text-emerald-400 font-mono flex items-center">
+                        ACTIVE NODES: {nodes.filter(n => n.data.status === 'running').length} / {nodes.length}
+                    </div>
+                    <button
+                        onClick={handleAutoLayout}
+                        className="bg-black/60 backdrop-blur px-3 py-2 rounded border border-emerald-900/30 text-emerald-400 hover:bg-emerald-900/30 transition-colors"
+                        title="Auto Layout"
+                    >
+                        <LayoutGrid size={16} />
+                    </button>
                 </Panel>
             </ReactFlow>
         </div>

@@ -17,7 +17,8 @@ const App = () => {
     // State from Zustand
     const {
         documentContent,
-        setDocumentContent
+        setDocumentContent,
+        settings
     } = useOuroborosStore();
 
     // UI State
@@ -45,6 +46,13 @@ Directives:
         });
     }, []);
 
+    // Apply font size globally
+    useEffect(() => {
+        if (settings.baseFontSize) {
+            document.documentElement.style.fontSize = `${settings.baseFontSize}px`;
+        }
+    }, [settings.baseFontSize]);
+
     // Node selection is handled by local state via FlowCanvas callback
 
     return (
@@ -66,7 +74,7 @@ Directives:
                 }
                 graph={
                     <div className="w-full h-full relative">
-                        <FlowCanvas onNodeClick={setSelectedNodeId} />
+                        <FlowCanvas onNodeClick={setSelectedNodeId} appMode={appMode} />
                         {/* Inspector Overlay */}
                         {selectedNodeId && (
                             <div className="absolute top-4 right-4 w-[400px] max-h-[calc(100%-2rem)] z-50">

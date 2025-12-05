@@ -31,7 +31,7 @@ const TypewriterText = ({ text }: { text: string }) => {
 
 
 export const LogViewer: React.FC<LogViewerProps> = () => {
-    const logs = useLiveQuery(() => db.logs.orderBy('id').toArray()) || [];
+    const logs = useLiveQuery(() => db.logs.orderBy('timestamp').toArray()) || [];
     const [filter, setFilter] = useState<LogFilter>('All');
     const scrollRef = useRef<HTMLDivElement>(null);
 

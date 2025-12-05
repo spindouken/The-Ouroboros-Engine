@@ -41,6 +41,13 @@ export const MODELS = [
     { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Legacy Flash', rpm: 15, rpd: 200, provider: 'google' },
     { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', desc: 'Legacy Lite (High RPM)', rpm: 30, rpd: 200, provider: 'google' },
 
+    // Gemma 3 Models (Free Tier)
+    { id: 'gemma-3-27b', label: 'Gemma 3 27B', desc: 'High Intelligence Open Model', rpm: 30, rpd: 14400, provider: 'google' },
+    { id: 'gemma-3-12b', label: 'Gemma 3 12B', desc: 'Balanced Open Model', rpm: 30, rpd: 14400, provider: 'google' },
+    { id: 'gemma-3-4b', label: 'Gemma 3 4B', desc: 'Efficient Open Model', rpm: 30, rpd: 14400, provider: 'google' },
+    { id: 'gemma-3-2b', label: 'Gemma 3 2B', desc: 'Lightweight Open Model', rpm: 30, rpd: 14400, provider: 'google' },
+    { id: 'gemma-3-1b', label: 'Gemma 3 1B', desc: 'Ultra-Light Open Model', rpm: 30, rpd: 14400, provider: 'google' },
+
     // OpenAI Models - Group 1 (250k tokens/day)
     { id: 'gpt-5.1', label: 'GPT-5.1', desc: 'Latest Flagship', rpm: 60, rpd: 250, provider: 'openai' },
     { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', desc: 'Specialized Coding', rpm: 60, rpd: 250, provider: 'openai' },
@@ -63,4 +70,9 @@ export const MODELS = [
     { id: 'o3-mini', label: 'o3 Mini', desc: 'Efficient Reasoning', rpm: 100, rpd: 2500, provider: 'openai' },
     { id: 'o4-mini', label: 'o4 Mini', desc: 'Next-Gen Mini', rpm: 100, rpd: 2500, provider: 'openai' },
     { id: 'codex-mini-latest', label: 'Codex Mini Latest', desc: 'Latest Code Mini', rpm: 100, rpd: 2500, provider: 'openai' },
+
+    // OpenRouter Models (Free/Cheap)
+    { id: 'x-ai/grok-4.1-fast:free', label: 'Grok Beta (Free)', desc: 'OpenRouter Free Tier', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (OR Free)', desc: 'OpenRouter Free Tier', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'openai/gpt-oss-20b:free', label: 'GPT-OSS 20B (Free)', desc: 'OpenRouter Free Tier with Reasoning', rpm: 20, rpd: 50, provider: 'openrouter' },
 ];

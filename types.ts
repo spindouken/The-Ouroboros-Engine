@@ -19,7 +19,8 @@ export type NodeStatus =
   | 'error'
   | 'verifying'
   | 'decomposing'
-  | 'voting';
+  | 'voting'
+  | 'planned';
 
 export type NodeType =
   | 'specialist'
@@ -37,6 +38,7 @@ export type AppMode = 'refine' | 'plan';
 export interface Node {
   id: string;
   type: NodeType;
+  mode: AppMode;
   label: string;
   instruction: string;
   persona: string;
@@ -72,6 +74,15 @@ export interface Node {
   // Persistence Fields
   parentId?: string;
   timestamp?: number;
+
+  // Debug / Quality Control Data
+  debugData?: {
+    lastPrompt?: string;
+    rawResponse?: string;
+    timestamp?: number;
+    modelUsed?: string;
+    executionTimeMs?: number;
+  };
 }
 
 // --- MICRO-AGENT DECOMPOSITION (Requirements 1.1, 1.2, 1.3, 1.4, 1.5) ---
@@ -195,9 +206,15 @@ export interface GraphSnapshot {
   tribunalScore: number;
 }
 
+export interface Edge {
+  source: string;
+  target: string;
+  weight?: number;
+}
+
 export interface Graph {
   nodes: Record<string, Node>;
-  edges: { source: string; target: string; weight?: number }[];
+  edges: Edge[];
   metadata?: GraphMetadata;
   layout?: LayoutConfig;
   history?: GraphSnapshot[];
@@ -255,6 +272,7 @@ export interface AppSettings {
   rpd: number; // Requests per day
   apiKey?: string; // Google API Key
   openaiApiKey?: string; // OpenAI API Key
+  openRouterApiKey?: string; // OpenRouter API Key
 
   // New settings for MDAP features
   autoSaveInterval: number;
@@ -280,6 +298,21 @@ export interface AppSettings {
   model_architect?: string;
   model_manifestation?: string;
   model_prism?: string;
+  model_oracle?: string;
+}
+
+// --- THE ORACLE (Requirements 3.0) ---
+
+export interface OracleMessage {
+  role: 'user' | 'oracle';
+  content: string;
+  timestamp: number;
+}
+
+export interface OracleContext {
+  originalRequest: string;
+  interviewTranscript: OracleMessage[];
+  fusedSpec?: any; // The JSON output from Context Fusion
 }
 
 // --- LOG ENTRY ---

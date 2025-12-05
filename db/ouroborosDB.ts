@@ -37,6 +37,7 @@ export interface DBProject {
     updatedAt: number;
     documentContent: string;
     projectPlan: PlanItem[];
+    manifestation?: string | null;
     council: any;
 }
 

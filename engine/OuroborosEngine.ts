@@ -1,5 +1,5 @@
-import { UnifiedLLMClient } from './UnifiedLLMClient';
-import { Graph, LogEntry, PlanItem, Node, NodeStatus, AppSettings } from '../types';
+import { UnifiedLLMClient, LLMResponse } from './UnifiedLLMClient';
+import { Graph, LogEntry, PlanItem, Node, NodeStatus, AppSettings, AppMode, OracleMessage } from '../types';
 import { createPrismController } from '../prism-controller';
 import { createMultiRoundVotingSystem, formatVotingResult } from '../multi-round-voting';
 import { createKnowledgeGraphManager } from '../knowledge-graph';
@@ -32,11 +32,12 @@ export class OuroborosEngine {
         this.memoryManager = createAgentMemoryManager();
         this.redFlagValidator = createRedFlagValidator();
         this.rateLimiter = createRateLimiter({ rpm: 60, rpd: 10000, enabled: true });
-        this.rateLimiter = createRateLimiter({ rpm: 60, rpd: 10000, enabled: true });
         this.ai = new UnifiedLLMClient(
             process.env.API_KEY || "",
-            process.env.OPENAI_API_KEY || ""
+            process.env.OPENAI_API_KEY || "",
+            process.env.OPENROUTER_API_KEY || ""
         );
+        this.apiSemaphore.max = useOuroborosStore.getState().settings.concurrency;
     }
 
     public static getInstance(): OuroborosEngine {
@@ -65,6 +66,7 @@ export class OuroborosEngine {
             rpd: settings.rpd,
             enabled: true
         });
+        this.apiSemaphore.max = settings.concurrency;
     }
 
     public setDocumentContent(content: string) {
@@ -97,7 +99,48 @@ export class OuroborosEngine {
             const nodes = await db.nodes.toArray();
             const edges = await db.edges.toArray();
 
-            // Update Store
+            // Restore Store State
+            useOuroborosStore.getState().setDocumentContent(project.documentContent || "");
+            useOuroborosStore.getState().setManifestation(project.manifestation || null);
+
+            // Reconstruct Project Plan from Nodes if missing in DB
+            let restoredPlan = project.projectPlan || [];
+            if (restoredPlan.length === 0) {
+                const planNodes = nodes.filter(n => n.mode === 'plan' && (n.type === 'tech_lead' || n.type === 'specialist'));
+
+                // 1. Find Modules (Tech Leads)
+                const modules = planNodes.filter(n => n.type === 'tech_lead').map(n => ({
+                    id: n.id,
+                    title: n.label.replace('Domain: ', '').replace('...', ''),
+                    description: n.instruction,
+                    type: 'module' as 'module',
+                    children: [] as any[]
+                }));
+
+                // 2. Find Tasks (Specialists) and attach to Modules
+                const tasks = planNodes.filter(n => n.type === 'specialist');
+                tasks.forEach(t => {
+                    const parentId = t.dependencies[0];
+                    const parentModule = modules.find(m => m.id === parentId);
+                    if (parentModule) {
+                        parentModule.children.push({
+                            id: t.id,
+                            title: t.label,
+                            description: t.instruction,
+                            type: 'task'
+                        });
+                    }
+                });
+
+                if (modules.length > 0) {
+                    restoredPlan = modules;
+                    this.addLog('system', 'Project Plan reconstructed from Graph Nodes.');
+                }
+            }
+
+            useOuroborosStore.getState().setProjectPlan(restoredPlan);
+
+            // Update Graph Visualization
             this.updateGraph(
                 nodes.reduce((acc, n) => ({ ...acc, [n.id]: n }), {}),
                 edges.map(e => ({ source: e.source, target: e.target }))
@@ -182,6 +225,110 @@ export class OuroborosEngine {
         }
     }
 
+
+
+    public async runOracle(userMessage: string, history: OracleMessage[], isSilentContext: boolean = false): Promise<number> {
+        const settings = useOuroborosStore.getState().settings;
+        const oracleModel = settings.model_oracle || settings.model;
+
+        // Only add user message if it's not a silent context (system initialization)
+        if (!isSilentContext) {
+            useOuroborosStore.getState().addOracleMessage({
+                role: 'user',
+                content: userMessage,
+                timestamp: Date.now()
+            });
+        }
+
+        const systemPrompt = `
+        You are The Oracle, a proactive requirements analyst.
+        Your goal is to interview the user to uncover "unknown unknowns" and hidden constraints.
+        
+        Current Conversation History:
+        ${history.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n')}
+        
+        ${isSilentContext
+                ? `User's Initial Context/Notes: "${userMessage}"\n\nTask:\n1. Analyze the user's initial notes.\n2. Formulate a greeting and a targeted first question to clarify the vision.`
+                : `User's Latest Input: "${userMessage}"\n\nTask:\n1. Analyze the user's request for ambiguity.\n2. Identify missing information.`}
+        
+        3. Formulate a response that acknowledges the input and asks a targeted, high-value question.
+        4. Estimate a "Clarity Score" (0-100) representing how ready this idea is for implementation.
+        
+        Return JSON:
+        {
+            "response": "Your conversational response...",
+            "clarity_score": number
+        }
+        `;
+
+        try {
+            const resp = await this.ai.models.generateContent({
+                model: oracleModel,
+                contents: systemPrompt,
+                config: { responseMimeType: "application/json" }
+            });
+
+            const data = this.extractJson(resp.text || "{}");
+
+            useOuroborosStore.getState().addOracleMessage({
+                role: 'oracle',
+                content: data.response || "I am pondering...",
+                timestamp: Date.now()
+            });
+
+            useOuroborosStore.getState().setClarityScore(data.clarity_score || 50);
+
+            return data.clarity_score || 50;
+
+        } catch (e) {
+            console.error("Oracle failed:", e);
+            return 0;
+        }
+    }
+
+    public async initiateOracleInterview(initialContext: string): Promise<void> {
+        // Clear existing history if any (though usually called on empty)
+        // We pass the initial context as a "silent" user message so the LLM sees it but it's not logged as a chat bubble
+        await this.runOracle(initialContext, [], true);
+    }
+
+    public async performContextFusion(history: OracleMessage[]): Promise<any> {
+        const settings = useOuroborosStore.getState().settings;
+        const oracleModel = settings.model_oracle || settings.model;
+
+        const systemPrompt = `
+        You are the Context Fusion Engine.
+        Your task is to synthesize a chaotic interview transcript into a structured "Prima Materia" specification.
+        
+        Transcript:
+        ${history.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n')}
+        
+        Output a detailed JSON specification containing:
+        - Project Name
+        - Core Objective
+        - Key Features (List)
+        - Technical Constraints
+        - User Personas
+        - "Unknown Unknowns" Identified
+        
+        This JSON will be fed into the Ouroboros Engine.
+        `;
+
+        try {
+            const resp = await this.ai.models.generateContent({
+                model: oracleModel,
+                contents: systemPrompt,
+                config: { responseMimeType: "application/json" }
+            });
+
+            const data = this.extractJson(resp.text || "{}");
+            return data;
+        } catch (e) {
+            console.error("Context Fusion failed:", e);
+            return null;
+        }
+    }
+
     // --- CORE LOGIC ---
 
     public async startRefinement(goal: string, activeDepts: string[] = ['strategy', 'ux', 'engineering', 'security']) {
@@ -193,10 +340,9 @@ export class OuroborosEngine {
         useOuroborosStore.getState().setOriginalRequirements(goal);
         useOuroborosStore.getState().setStatus('thinking');
 
-        // Clear DB for new session
-        await db.nodes.clear();
-        await db.edges.clear();
-        await db.logs.clear();
+        // Clear DB for new session (Refine Mode only)
+        await this.clearNodesForMode('refine');
+        await db.logs.clear(); // Maybe we want to keep logs? Or filter them too? For now, clear logs is standard behavior for new run.
         await this.saveSession(); // Save initial state
 
         this.addLog('system', 'Summoning the Council of Experts...');
@@ -210,15 +356,23 @@ export class OuroborosEngine {
         if (!this.ai) {
             this.ai = new UnifiedLLMClient(
                 process.env.API_KEY || "",
-                process.env.OPENAI_API_KEY || ""
+                process.env.OPENAI_API_KEY || "",
+                process.env.OPENROUTER_API_KEY || ""
             );
         }
+
+        // Ensure keys are up to date from Settings/Env before starting Prism
+        const settings = useOuroborosStore.getState().settings;
+        const googleKey = this.apiKey || process.env.API_KEY || "";
+        const openaiKey = this.openaiApiKey || process.env.OPENAI_API_KEY || "";
+        const openRouterKey = settings.openRouterApiKey || process.env.OPENROUTER_API_KEY || "";
+        this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined);
+
         const ai = this.ai;
         // 1. Spawn The Squad (Dynamic via Prism)
         const domainLeadIds: string[] = [];
 
         // PHASE 1: Create Domain Leads (Immediate Feedback)
-        const settings = useOuroborosStore.getState().settings;
         for (const deptKey of activeDepts) {
             const leadId = `lead_${deptKey}_${roundId}`;
             domainLeadIds.push(leadId);
@@ -229,7 +383,8 @@ export class OuroborosEngine {
                 department: deptKey,
                 instruction: `Review the insights from your specialists.Weigh them based on their Confidence Score.Vote on the best features.Synthesize a unified ${deptKey} strategy.`,
                 dependencies: [],
-                status: 'pending', output: null, depth: 1
+                status: 'pending', output: null, depth: 1,
+                mode: 'refine'
             };
         }
         // Initial Render: Show Leads immediately
@@ -241,7 +396,8 @@ export class OuroborosEngine {
 
             // Call Prism for this specific department
             const prismModel = settings.model_prism || settings.model;
-            this.addLog('system', `Prism analyzing for ${deptKey} using model: ${prismModel}...`);
+            const isOverride = !!settings.model_prism && settings.model_prism !== settings.model;
+            this.addLog('system', `Prism analyzing for ${deptKey} using model: ${prismModel}${isOverride ? ' (Tier Override)' : ''}...`);
             console.log(`[Engine] Calling Prism for ${deptKey} with model ${prismModel}`);
 
             let deptAgents;
@@ -270,7 +426,8 @@ export class OuroborosEngine {
                     instruction: "Analyze the spec. You are a DISSENTER. Do not agree with the status quo. Find flaws, edge cases, and alternative approaches. If you agree, you fail.",
                     dependencies: [],
                     status: 'pending', output: null, depth: 2,
-                    data: { temperature: agent.temperature }
+                    data: { temperature: agent.temperature },
+                    mode: 'refine'
                 };
                 edges.push({ source: specId, target: leadId });
                 nodes[leadId].dependencies.push(specId);
@@ -286,7 +443,8 @@ export class OuroborosEngine {
             persona: 'Grand Architect',
             instruction: 'Consume the unified domain strategies. Weave them into the Prima Materia. Ensure holistic consistency.',
             dependencies: domainLeadIds,
-            status: 'pending', output: null, depth: 0
+            status: 'pending', output: null, depth: 0,
+            mode: 'refine'
         };
         domainLeadIds.forEach(id => edges.push({ source: id, target: alchemistId }));
 
@@ -297,7 +455,8 @@ export class OuroborosEngine {
             persona: 'Supreme Court of Verification',
             instruction: 'Verify the Transmuted Spec against the Constitution. Vote PASS or FAIL.',
             dependencies: [alchemistId],
-            status: 'pending', output: null, depth: 0
+            status: 'pending', output: null, depth: 0,
+            mode: 'refine'
         };
         edges.push({ source: alchemistId, target: tribunalId });
 
@@ -322,10 +481,9 @@ export class OuroborosEngine {
         useOuroborosStore.getState().setOriginalRequirements(goal);
         useOuroborosStore.getState().setStatus('thinking');
 
-        // Clear DB for new session
-        await db.nodes.clear();
-        await db.edges.clear();
-        await db.logs.clear();
+        // Clear DB for new session (Plan Mode only)
+        await this.clearNodesForMode('plan');
+        // await db.logs.clear(); // Keep logs from refinement?
         await this.saveSession();
 
         this.addLog('system', 'Initiating MANIFESTATION Sequence...');
@@ -336,7 +494,8 @@ export class OuroborosEngine {
                 id: rootId, type: 'architect', label: 'Head of Ouroboros',
                 persona: 'Grand Architect',
                 instruction: 'Analyze the Transmuted Spec. Break it down into 3-5 distinct structural domains. Return JSON.',
-                dependencies: [], status: 'pending', output: null, depth: 0
+                dependencies: [], status: 'pending', output: null, depth: 0,
+                mode: 'plan'
             }
         };
 
@@ -362,7 +521,7 @@ export class OuroborosEngine {
             const nodesRef: Record<string, Node> = allNodes.reduce((acc, n) => ({ ...acc, [n.id]: n }), {});
 
             const pendingNodes = allNodes.filter(n => n.status === 'pending');
-            const runningNodes = allNodes.filter(n => n.status !== 'pending' && n.status !== 'complete' && n.status !== 'error');
+            const runningNodes = allNodes.filter(n => n.status !== 'pending' && n.status !== 'complete' && n.status !== 'error' && n.status !== 'planned');
 
             if (pendingNodes.length === 0 && runningNodes.length === 0) {
                 const tribunalNodes = allNodes.filter(n => n.type === 'gatekeeper' && n.status === 'complete');
@@ -400,7 +559,8 @@ export class OuroborosEngine {
                                             id: j.id, type: 'gatekeeper', label: j.label,
                                             persona: j.persona,
                                             instruction: `Re-evaluate based on ${j.focus}. Vote 0-100.`,
-                                            dependencies: [alchemist.id], status: 'pending', output: null, depth: 0
+                                            dependencies: [alchemist.id], status: 'pending', output: null, depth: 0,
+                                            mode: 'refine'
                                         };
                                         newEdges.push({ source: alchemist.id, target: j.id });
                                     });
@@ -489,7 +649,11 @@ export class OuroborosEngine {
         this.ai.updateKeys(undefined, key);
     }
 
-    private async executeNode(nodeId: string, checkRunnableCallback: () => void, signal: AbortSignal): Promise<boolean> {
+    public setOpenRouterKey(key: string) {
+        this.ai.updateKeys(undefined, undefined, key);
+    }
+
+    private async executeNode(nodeId: string, checkRunnableCallback: () => void, signal: AbortSignal, retryCount: number = 0): Promise<boolean> {
         if (signal.aborted) return false;
 
         const node = await db.nodes.get(nodeId);
@@ -504,6 +668,10 @@ export class OuroborosEngine {
 
         await this.updateNodeState(nodeId, { status });
 
+        const startTime = Date.now();
+        let lastPrompt = "";
+        let rawResponse = "";
+
         try {
             await this.apiSemaphore.acquire();
             if (signal.aborted) {
@@ -514,13 +682,15 @@ export class OuroborosEngine {
             await this.rateLimiter.waitForSlot();
             this.rateLimiter.recordRequest();
 
+            const settings = useOuroborosStore.getState().settings;
+
             // Ensure keys are up to date (in case they were set via SettingsPanel but not env)
             const googleKey = this.apiKey || process.env.API_KEY || "";
             const openaiKey = this.openaiApiKey || process.env.OPENAI_API_KEY || "";
-            this.ai.updateKeys(googleKey || undefined, openaiKey || undefined);
+            const openRouterKey = settings.openRouterApiKey || process.env.OPENROUTER_API_KEY || "";
+            this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined);
 
             const ai = this.ai;
-            const settings = useOuroborosStore.getState().settings;
             let selectedModel = settings.model;
 
             // Tiered Model Selection
@@ -529,12 +699,28 @@ export class OuroborosEngine {
             if (node.type === 'architect' && settings.model_architect) selectedModel = settings.model_architect;
             if (node.type === 'synthesizer' && settings.model_synthesizer) selectedModel = settings.model_synthesizer;
             if (node.type === 'gatekeeper' && settings.model_judge) selectedModel = settings.model_judge;
-
             const dependencyOutputs = await Promise.all(node.dependencies.map(async d => {
                 const depNode = await db.nodes.get(d);
                 if (!depNode) return "";
                 const scoreStr = depNode.score ? `[Confidence: ${depNode.score}%]` : '';
-                return `FROM [${depNode.label}] ${scoreStr}:\n${depNode.output}`;
+
+                let content = depNode.output;
+                if (depNode.artifacts && (depNode.artifacts.specification || depNode.artifacts.code || depNode.artifacts.proof)) {
+                    content = `
+                    SUMMARY: ${depNode.output}
+                    
+                    SPECIFICATION:
+                    ${depNode.artifacts.specification || "N/A"}
+                    
+                    CODE:
+                    ${depNode.artifacts.code || "N/A"}
+                    
+                    PROOF:
+                    ${depNode.artifacts.proof || "N/A"}
+                    `;
+                }
+
+                return `FROM [${depNode.label}] ${scoreStr}:\n${content}`;
             }));
             const dependencyOutputsStr = dependencyOutputs.join('\n\n');
 
@@ -562,9 +748,7 @@ export class OuroborosEngine {
 
                 if (node.type === 'specialist') {
                     this.addLog('info', `${node.label} is analyzing... (Attempt ${attempts})`, nodeId);
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: `You are: ${node.persona}.
+                    lastPrompt = `You are: ${node.persona}.
                     
                     THE PRIMA MATERIA (SPEC):
                     """
@@ -576,9 +760,14 @@ export class OuroborosEngine {
                     Provide specific, actionable insights. 
                     CRITICAL: You must rate your own confidence in these insights (0-100) based on how critical they are to the project's success.
                     
-                    Return JSON: { "insight": "markdown string...", "confidence": number }`,
-                        config: generationConfig
-                    });
+                    Return JSON: { "insight": "markdown string...", "confidence": number }`;
+
+                    const resp = await this.callLLM(
+                        selectedModel,
+                        lastPrompt,
+                        generationConfig
+                    );
+                    rawResponse = resp.text || "";
                     resultData = this.extractJson(resp.text || "{}");
                     resultText = resultData?.insight || "No insights.";
                     score = resultData?.confidence || 0;
@@ -595,9 +784,7 @@ export class OuroborosEngine {
 
                 } else if (node.type === 'domain_lead') {
                     this.addLog('info', `${node.label} is unifying strategy...`, nodeId);
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: `You are: ${node.persona}.
+                    lastPrompt = `You are: ${node.persona}.
                     
                     YOUR SPECIALISTS' INSIGHTS (Divergent Views):
                     ${dependencyOutputsStr}
@@ -616,26 +803,49 @@ export class OuroborosEngine {
                       "code": "markdown string",
                       "proof": "markdown string",
                       "summary": "markdown string (for the graph)"
-                    }`,
+                    }`;
+
+                    const resp = await ai.models.generateContent({
+                        model: selectedModel,
+                        contents: lastPrompt,
                         config: { responseMimeType: "application/json" }
                     });
+                    rawResponse = resp.text || "";
 
                     resultData = this.extractJson(resp.text || "{}");
-                    resultText = resultData?.summary || "Synthesis failed.";
+
+                    // Construct full report for visibility and downstream agents
+                    const summary = resultData?.summary || "No summary provided.";
+                    const spec = resultData?.specification || "No specification provided.";
+                    const code = resultData?.code || "No code provided.";
+                    const proof = resultData?.proof || "No proof provided.";
+
+                    resultText = `
+# EXECUTIVE SUMMARY
+${summary}
+
+# SPECIFICATION
+${spec}
+
+# IMPLEMENTATION PLAN
+${code}
+
+# VERIFICATION PROOF
+${proof}
+`;
 
                     await this.updateNodeState(nodeId, {
                         artifacts: {
-                            specification: resultData?.specification,
-                            code: resultData?.code,
-                            proof: resultData?.proof
-                        }
+                            specification: spec,
+                            code: code,
+                            proof: proof
+                        },
+                        data: { ...(node.data || {}), summary: summary }
                     });
 
                 } else if (node.type === 'synthesizer') { // The Alchemist
                     this.addLog('system', `Alchemist Transmuting...`, nodeId);
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: `You are: ${node.persona}.
+                    lastPrompt = `You are: ${node.persona}.
                     
                     THE OLD MATTER:
                     """
@@ -658,8 +868,13 @@ export class OuroborosEngine {
                     3. **Data Structures** (JSON/Schemas)
                     4. **User Experience Flow** (Step-by-step)
                     
-                    Avoid marketing fluff. Prioritize engineering density.`
+                    Avoid marketing fluff. Prioritize engineering density.`;
+
+                    const resp = await ai.models.generateContent({
+                        model: selectedModel,
+                        contents: lastPrompt
                     });
+                    rawResponse = resp.text || "";
                     resultText = resp.text || useOuroborosStore.getState().documentContent;
                     useOuroborosStore.getState().setDocumentContent(resultText);
                     this.addLog('success', `Transmutation Complete`, nodeId);
@@ -729,7 +944,7 @@ export class OuroborosEngine {
 
                                 if (subTasks.length > 0) {
                                     this.addLog('system', `Decomposed into ${subTasks.length} micro-tasks. Spawning new agents...`, nodeId);
-                                    this.expandPlanningTree(nodeId, subTasks, 'tasks', (node.depth || 0) + 1);
+                                    this.expandPlanningTree(nodeId, subTasks, 'tasks', (node.depth || 0) + 1, 'pending', node.mode);
                                     this.prismController.resetFailureCount(nodeId);
                                     executionValid = true;
                                 } else {
@@ -747,9 +962,7 @@ export class OuroborosEngine {
                     }
                 } else if (node.type === 'architect') {
                     this.addLog('system', `${node.label} is architecting the system...`, nodeId);
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: `You are: ${node.persona}.
+                    lastPrompt = `You are: ${node.persona}.
                         
                         THE SPECIFICATION:
                         """
@@ -764,21 +977,24 @@ export class OuroborosEngine {
                             "modules": [
                                 { "id": "string (unique)", "title": "string", "description": "string" }
                             ]
-                        }`,
+                        }`;
+
+                    const resp = await ai.models.generateContent({
+                        model: selectedModel,
+                        contents: lastPrompt,
                         config: { responseMimeType: "application/json" }
                     });
+                    rawResponse = resp.text || "";
 
                     resultData = this.extractJson(resp.text || "{}");
                     resultText = "Architecture Defined.";
 
                     if (resultData?.modules) {
-                        this.expandPlanningTree(nodeId, resultData.modules, 'modules', (node.depth || 0) + 1);
+                        this.expandPlanningTree(nodeId, resultData.modules, 'modules', (node.depth || 0) + 1, 'pending', node.mode);
                     }
                 } else if (node.type === 'tech_lead') {
                     this.addLog('system', `${node.label} is planning tasks...`, nodeId);
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: `You are: ${node.persona}.
+                    lastPrompt = `You are: ${node.persona}.
                         
                         THE SPECIFICATION:
                         """
@@ -793,15 +1009,20 @@ export class OuroborosEngine {
                             "tasks": [
                                 { "id": "string (unique)", "title": "string", "instruction": "string", "minimalContext": "string" }
                             ]
-                        }`,
-                        config: { responseMimeType: "application/json" }
-                    });
+                        }`;
+
+                    const resp = await this.callLLM(
+                        selectedModel,
+                        lastPrompt,
+                        { responseMimeType: "application/json" }
+                    );
+                    rawResponse = resp.text || "";
 
                     resultData = this.extractJson(resp.text || "{}");
                     resultText = "Domain Planning Complete.";
 
                     if (resultData?.tasks) {
-                        this.expandPlanningTree(nodeId, resultData.tasks, 'tasks', (node.depth || 0) + 1);
+                        this.expandPlanningTree(nodeId, resultData.tasks, 'tasks', (node.depth || 0) + 1, 'planned', node.mode);
                     }
                 }
 
@@ -823,7 +1044,7 @@ export class OuroborosEngine {
                                     instruction: `The previous output failed validation:\n${validation.flags.map(f => f.message).join('\n')}\n\nFix the output to adhere to quality standards.`,
                                     minimalContext: resultText
                                 };
-                                this.expandPlanningTree(nodeId, [fixTask], 'tasks', (node.depth || 0) + 1);
+                                this.expandPlanningTree(nodeId, [fixTask], 'tasks', (node.depth || 0) + 1, 'pending', node.mode);
                                 executionValid = true;
                             } else {
                                 currentTemp = validation.suggestedTemperature || currentTemp;
@@ -887,7 +1108,19 @@ export class OuroborosEngine {
             }
 
             this.apiSemaphore.release();
-            await this.updateNodeState(nodeId, { status: 'complete', output: resultText, score: score, data: resultData });
+            await this.updateNodeState(nodeId, {
+                status: 'complete',
+                output: resultText,
+                score: score,
+                data: resultData,
+                debugData: {
+                    lastPrompt,
+                    rawResponse,
+                    timestamp: Date.now(),
+                    modelUsed: selectedModel,
+                    executionTimeMs: Date.now() - startTime
+                }
+            });
             return true;
 
         } catch (e) {
@@ -896,10 +1129,19 @@ export class OuroborosEngine {
             const err = e as Error;
 
             if (err.message.includes("quota") || err.message.includes("429")) {
-                this.addLog('warn', "Quota Limit Hit (429). Pausing for 60s before retrying...", nodeId);
+                const waitTimeSeconds = Math.min(3 * Math.pow(2, retryCount), 30);
+                const waitTimeMs = waitTimeSeconds * 1000;
+
+                this.addLog('warn', `Quota Limit Hit (429). Pausing for ${waitTimeSeconds}s before retrying (Attempt ${retryCount + 1})...`, nodeId);
                 await this.updateNodeState(nodeId, { status: 'pending' });
-                await new Promise(resolve => setTimeout(resolve, 60000));
-                return this.executeNode(nodeId, checkRunnableCallback, signal);
+                await new Promise(resolve => setTimeout(resolve, waitTimeMs));
+
+                if (signal.aborted) {
+                    this.addLog('info', "Retry aborted during wait.", nodeId);
+                    return false;
+                }
+
+                return this.executeNode(nodeId, checkRunnableCallback, signal, retryCount + 1);
             }
 
             this.addLog('error', err.message, nodeId);
@@ -917,7 +1159,7 @@ export class OuroborosEngine {
 
                 if (subTasks.length > 0) {
                     this.addLog('system', `Decomposed into ${subTasks.length} micro-tasks. Spawning new agents...`, nodeId);
-                    this.expandPlanningTree(nodeId, subTasks, 'tasks', (node.depth || 0) + 1);
+                    this.expandPlanningTree(nodeId, subTasks, 'tasks', (node.depth || 0) + 1, 'pending', node.mode);
                     this.prismController.resetFailureCount(nodeId);
                 } else {
                     this.addLog('error', 'Decomposition failed. Escalating to human review.', nodeId);
@@ -969,7 +1211,7 @@ export class OuroborosEngine {
         });
     }
 
-    private extractJson(text: string) {
+    private extractJson(text: string): any {
         try {
             const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
             return JSON.parse(clean);
@@ -978,7 +1220,19 @@ export class OuroborosEngine {
         }
     }
 
-    private async expandPlanningTree(parentId: string, items: any[], type: 'modules' | 'tasks', depth: number) {
+    private async callLLM(model: string, prompt: string, config?: any): Promise<LLMResponse> {
+        const resp = await this.ai.models.generateContent({
+            model: model,
+            contents: prompt,
+            config: config
+        });
+        if (resp.usage) {
+            useOuroborosStore.getState().addUsage(model, resp.usage);
+        }
+        return resp;
+    }
+
+    private async expandPlanningTree(parentId: string, items: any[], type: 'modules' | 'tasks', depth: number, initialStatus: NodeStatus = 'pending', mode: AppMode = 'plan') {
         const newNodes: Record<string, Node> = {};
         const newEdges: { source: string, target: string }[] = [];
         const newPlanItems: PlanItem[] = [];
@@ -991,7 +1245,7 @@ export class OuroborosEngine {
                 minimalContext: item.minimalContext || "",
                 output: null,
                 confidence: 0,
-                status: 'pending' as NodeStatus
+                status: initialStatus
             }));
             await this.updateNodeState(parentId, { microTasks });
         }
@@ -1010,7 +1264,8 @@ export class OuroborosEngine {
                     id: nodeId, type: 'tech_lead', label: `Domain: ${item.title.substring(0, 10)}...`,
                     persona: `Domain Keeper (${item.title})`,
                     instruction: `Analyze domain: "${item.title} - ${item.description}".`,
-                    dependencies: [parentId], status: 'pending', output: null, depth: depth
+                    dependencies: [parentId], status: 'pending', output: null, depth: depth,
+                    mode: mode
                 };
                 newEdges.push({ source: parentId, target: nodeId });
 
@@ -1035,13 +1290,14 @@ export class OuroborosEngine {
                 newNodes[nodeId] = {
                     id: nodeId,
                     type: 'specialist',
-                    label: label,
+                    label: label.length > 40 ? label.substring(0, 37) + '...' : label,
                     persona: 'Micro-Agent Specialist',
                     instruction: item.instruction,
                     dependencies: [parentId],
-                    status: 'pending',
+                    status: initialStatus,
                     output: null,
-                    depth: depth
+                    depth: depth,
+                    mode: mode
                 };
                 newEdges.push({ source: parentId, target: nodeId });
 
@@ -1063,13 +1319,21 @@ export class OuroborosEngine {
         if (type === 'modules') {
             currentPlan = [...currentPlan, ...newPlanItems];
         } else {
-            // Find parent module and add children
-            currentPlan = currentPlan.map(item => {
-                if (item.id === parentId || item.id === `lead_${parentId}`) {
-                    return { ...item, children: [...(item.children || []), ...newPlanItems] };
-                }
-                return item;
-            });
+            // Recursive helper to find parent and add children
+            const updateChildren = (items: PlanItem[]): PlanItem[] => {
+                return items.map(item => {
+                    // Check if this item is the parent
+                    if (item.id === parentId || item.id === `lead_${parentId}` || item.id === parentId.replace('lead_', '')) {
+                        return { ...item, children: [...(item.children || []), ...newPlanItems] };
+                    }
+                    // If not, check its children recursively
+                    if (item.children && item.children.length > 0) {
+                        return { ...item, children: updateChildren(item.children) };
+                    }
+                    return item;
+                });
+            };
+            currentPlan = updateChildren(currentPlan);
         }
 
         store.setProjectPlan(currentPlan);
@@ -1101,7 +1365,8 @@ export class OuroborosEngine {
                 id: leadId, type: 'domain_lead', label: `${deptKey} Lead`,
                 persona: `Head of ${deptKey}`, department: deptKey,
                 instruction: `Re-evaluate the spec. Previous cycle failed consensus. Fix the issues identified by the Tribunal.`,
-                dependencies: [], status: 'pending', output: null, depth: 1
+                dependencies: [], status: 'pending', output: null, depth: 1,
+                mode: 'refine'
             };
 
             newEdges.push({ source: anchorNode.id, target: leadId });
@@ -1112,7 +1377,8 @@ export class OuroborosEngine {
             id: alchemistId, type: 'synthesizer', label: `Alchemist v${roundId}`,
             persona: 'Grand Architect',
             instruction: 'Refine the matter again. Higher density. Address Tribunal concerns.',
-            dependencies: domainLeadIds, status: 'pending', output: null, depth: 0
+            dependencies: domainLeadIds, status: 'pending', output: null, depth: 0,
+            mode: 'refine'
         };
         domainLeadIds.forEach(id => newEdges.push({ source: id, target: alchemistId }));
 
@@ -1121,7 +1387,8 @@ export class OuroborosEngine {
             id: tribunalId, type: 'gatekeeper', label: 'The Tribunal',
             persona: 'Supreme Court of Verification',
             instruction: 'Re-evaluate the spec. Vote PASS or FAIL.',
-            dependencies: [alchemistId], status: 'pending', output: null, depth: 0
+            dependencies: [alchemistId], status: 'pending', output: null, depth: 0,
+            mode: 'refine'
         };
         newEdges.push({ source: alchemistId, target: tribunalId });
 
@@ -1150,7 +1417,8 @@ export class OuroborosEngine {
             department: 'correction',
             instruction: `Review the correction insights. Synthesize a fix for the VETO: "${vetoReason}". Plan: ${correctionPlan}`,
             dependencies: [anchorNodeId],
-            status: 'pending', output: null, depth: 1
+            status: 'pending', output: null, depth: 1,
+            mode: 'refine'
         };
         newEdges.push({ source: anchorNodeId, target: leadId });
 
@@ -1168,7 +1436,8 @@ export class OuroborosEngine {
                 instruction: `Implement the Correction Plan: ${correctionPlan}`,
                 dependencies: [anchorNodeId],
                 status: 'pending', output: null, depth: 2,
-                data: { temperature: agent.temperature }
+                data: { temperature: agent.temperature },
+                mode: 'refine'
             };
             newEdges.push({ source: anchorNodeId, target: specId });
             newEdges.push({ source: specId, target: leadId });
@@ -1180,7 +1449,8 @@ export class OuroborosEngine {
             id: alchemistId, type: 'synthesizer', label: `Alchemist v${roundId}`,
             persona: 'Grand Architect',
             instruction: 'Integrate the correction into the Prima Materia. Ensure the VETO is resolved.',
-            dependencies: [leadId], status: 'pending', output: null, depth: 0
+            dependencies: [leadId], status: 'pending', output: null, depth: 0,
+            mode: 'refine'
         };
         newEdges.push({ source: leadId, target: alchemistId });
 
@@ -1190,7 +1460,8 @@ export class OuroborosEngine {
             id: tribunalId, type: 'gatekeeper', label: 'Correction Tribunal',
             persona: 'Supreme Court of Verification',
             instruction: `Verify the correction. VETO was: "${vetoReason}". Vote 0-100.`,
-            dependencies: [alchemistId], status: 'pending', output: null, depth: 0
+            dependencies: [alchemistId], status: 'pending', output: null, depth: 0,
+            mode: 'refine'
         };
         newEdges.push({ source: alchemistId, target: tribunalId });
 
@@ -1261,15 +1532,33 @@ export class OuroborosEngine {
         }
     }
 
-    public async downloadProject() {
+    public async downloadProject(format: 'markdown' | 'json' = 'markdown') {
         const store = useOuroborosStore.getState();
 
-        const primaMateria = store.documentContent;
-        const manifestation = store.manifestation || "Manifestation not generated.";
-        const plan = JSON.stringify(store.projectPlan, null, 2);
-        const dbExport = await this.exportDatabase();
+        if (format === 'markdown') {
+            const primaMateria = store.documentContent;
+            const manifestation = store.manifestation || "Manifestation not generated.";
 
-        const projectBible = `
+            // Recursive helper to format plan as markdown checklist
+            const formatPlanToMarkdown = (items: PlanItem[], depth: number = 0): string => {
+                return items.map(item => {
+                    const indent = '  '.repeat(depth);
+                    const checkbox = '- [ ]';
+                    const title = `**${item.title}**`;
+                    const desc = item.description ? ` - ${item.description}` : '';
+                    let output = `${indent}${checkbox} ${title}${desc}\n`;
+
+                    if (item.children && item.children.length > 0) {
+                        output += formatPlanToMarkdown(item.children, depth + 1);
+                    }
+                    return output;
+                }).join('');
+            };
+
+            const planMarkdown = formatPlanToMarkdown(store.projectPlan);
+            const dbExport = await this.exportDatabase();
+
+            const projectBible = `
 # PROJECT BIBLE: ${new Date().toISOString().split('T')[0]}
 
 ## PRIMA MATERIA (The Vision)
@@ -1282,27 +1571,80 @@ ${manifestation}
 
 ---
 
-## RAW PLAN (The Structure)
-\`\`\`json
-${plan}
-\`\`\`
-        `;
+## PROJECT PLAN (The Checklist)
+${planMarkdown}
+            `;
 
-        // Download Project Bible
-        const blob = new Blob([projectBible], { type: 'text/markdown' });
+            // Download Project Bible
+            const blob = new Blob([projectBible], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `PROJECT_BIBLE_${new Date().toISOString().split('T')[0]}.md`;
+            a.click();
+        } else {
+            // Download Project Plan as JSON
+            const planJson = JSON.stringify(store.projectPlan, null, 2);
+            const blob = new Blob([planJson], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `project_plan_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+        }
+    }
+
+    public async generateDebugReport(): Promise<string> {
+        const nodes = await db.nodes.toArray();
+        const logs = await db.logs.toArray();
+        const settings = useOuroborosStore.getState().settings;
+
+        let report = `# Ouroboros Debug Report
+**Timestamp:** ${new Date().toLocaleString()}
+**Model:** ${settings.model}
+**Session ID:** Current Session
+
+## 1. System State
+*   **Document Content Length:** ${useOuroborosStore.getState().documentContent.length} chars
+*   **Total Nodes:** ${nodes.length}
+*   **Total Logs:** ${logs.length}
+
+## 2. Node Execution Trace
+`;
+
+        for (const node of nodes) {
+            if (!node.debugData) continue;
+
+            report += `### [${node.id}] - ${node.label}
+*   **Type:** ${node.type}
+*   **Status:** ${node.status}
+*   **Score:** ${node.score || 0}
+*   **Red Flags:** ${node.redFlags ? node.redFlags.map(f => f.type).join(', ') : 'None'}
+*   **Model:** ${node.debugData.modelUsed || 'N/A'}
+*   **Execution Time:** ${node.debugData.executionTimeMs}ms
+*   **Prompt Used:**
+\`\`\`
+${node.debugData.lastPrompt || 'N/A'}
+\`\`\`
+*   **Raw Output:**
+\`\`\`
+${node.debugData.rawResponse || 'N/A'}
+\`\`\`
+---
+`;
+        }
+
+        return report;
+    }
+
+    public async downloadDebugReport() {
+        const report = await this.generateDebugReport();
+        const blob = new Blob([report], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `PROJECT_BIBLE_${new Date().toISOString().split('T')[0]}.md`;
+        a.download = `OUROBOROS_DEBUG_REPORT_${new Date().toISOString().split('T')[0]}.md`;
         a.click();
-
-        // Download DB Export
-        const dbBlob = new Blob([dbExport], { type: 'application/json' });
-        const dbUrl = URL.createObjectURL(dbBlob);
-        const b = document.createElement('a');
-        b.href = dbUrl;
-        b.download = `ouroboros_db_${new Date().toISOString().split('T')[0]}.json`;
-        b.click();
     }
 
     private generateJudges(roundId: string, count: number) {
@@ -1377,6 +1719,25 @@ ${plan}
             layerCurrent[l] = idx + 1;
         });
         return nodes;
+    }
+
+    private async clearNodesForMode(mode: AppMode) {
+        const nodesToDelete = await db.nodes.filter(n => n.mode === mode).toArray();
+        const ids = nodesToDelete.map(n => n.id);
+
+        if (ids.length > 0) {
+            await db.nodes.bulkDelete(ids);
+
+            // Delete associated edges
+            const allEdges = await db.edges.toArray();
+            const edgesToDelete = allEdges
+                .filter(e => ids.includes(e.source) || ids.includes(e.target))
+                .map(e => e.id!); // id is optional in interface but present in DB object from toArray
+
+            if (edgesToDelete.length > 0) {
+                await db.edges.bulkDelete(edgesToDelete);
+            }
+        }
     }
 
     // --- SEMAPHORE ---

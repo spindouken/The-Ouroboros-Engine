@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Zap, Gauge, Info, Download, Upload, Shield } from 'lucide-react';
+import { Settings, X, Zap, Gauge, Info, Download, Upload, Shield, Bug } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import { OuroborosEngine } from '../engine/OuroborosEngine';
 import { AppSettings } from '../types';
 import { MODELS } from '../constants';
 import { useSoundEffects } from '../hooks/useSoundEffects';
+import { useOuroborosStore } from '../store/ouroborosStore';
 
 interface SettingsPanelProps {
     onClose: () => void;
@@ -21,12 +22,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const engine = OuroborosEngine.getInstance();
     const { playClick, playHover } = useSoundEffects();
 
-    // Apply font size immediately when settings change
-    useEffect(() => {
-        if (settings.baseFontSize) {
-            document.documentElement.style.fontSize = `${settings.baseFontSize}px`;
-        }
-    }, [settings.baseFontSize]);
+
 
     const handleExport = async () => {
         playClick();
@@ -79,7 +75,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 <Zap className="w-3 h-3" /> SELECT MODEL
                             </label>
                             <div className="flex gap-1">
-                                {['all', 'google', 'openai'].map(p => (
+                                {['all', 'google', 'openai', 'openrouter'].map(p => (
                                     <button
                                         key={p}
                                         onClick={() => setSelectedProvider(p as any)}
@@ -124,30 +120,185 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                         <label className="text-xs font-bold text-emerald-700 flex items-center gap-2">
                             <Zap className="w-3 h-3" /> TIERED MODEL CONFIGURATION
                         </label>
-                        <div className="grid grid-cols-2 gap-3">
-                            {[
-                                { label: 'Specialist', key: 'model_specialist' },
-                                { label: 'Lead (Tech/Domain)', key: 'model_lead' },
-                                { label: 'Architect', key: 'model_architect' },
-                                { label: 'Synthesizer', key: 'model_synthesizer' },
-                                { label: 'Judge', key: 'model_judge' },
-                                { label: 'Manifestation', key: 'model_manifestation' },
-                                { label: 'Prism (Roles)', key: 'model_prism' },
-                            ].map(({ label, key }) => (
-                                <div key={key} className="space-y-1">
-                                    <label className="text-[10px] text-emerald-600 font-bold">{label}</label>
-                                    <select
-                                        value={(settings[key as keyof AppSettings] as string) || ""}
-                                        onChange={(e) => onUpdate({ [key]: e.target.value })}
-                                        className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
-                                    >
-                                        <option value="">Default ({MODELS.find(m => m.id === settings.model)?.label})</option>
-                                        {MODELS.filter(m => selectedProvider === 'all' || m.provider === selectedProvider).map(m => (
-                                            <option key={m.id} value={m.id}>{m.label}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            ))}
+
+                        {/* Quick Templates */}
+                        <div className="flex gap-2 mb-2">
+                            <button
+                                onClick={() => {
+                                    playClick();
+                                    onUpdate({
+                                        model_specialist: '', model_lead: '', model_architect: '',
+                                        model_synthesizer: '', model_judge: '', model_manifestation: '', model_prism: ''
+                                    });
+                                }}
+                                onMouseEnter={() => playHover()}
+                                className="px-2 py-1 bg-emerald-900/20 border border-emerald-900/50 rounded text-[10px] text-emerald-400 hover:bg-emerald-900/40"
+                            >
+                                Reset (Balanced)
+                            </button>
+                            <button
+                                onClick={() => {
+                                    playClick();
+                                    onUpdate({
+                                        model_specialist: 'gemini-2.5-flash',
+                                        model_lead: 'gemini-2.5-flash',
+                                        model_architect: 'gemini-2.5-pro',
+                                        model_synthesizer: 'gemini-2.5-pro',
+                                        model_judge: 'gemini-2.5-pro',
+                                        model_manifestation: 'gemini-2.5-flash',
+                                        model_prism: 'gemini-2.5-pro'
+                                    });
+                                }}
+                                onMouseEnter={() => playHover()}
+                                className="px-2 py-1 bg-purple-900/20 border border-purple-900/50 rounded text-[10px] text-purple-400 hover:bg-purple-900/40"
+                            >
+                                Genius Core
+                            </button>
+                            <button
+                                onClick={() => {
+                                    playClick();
+                                    onUpdate({
+                                        model_specialist: 'gemma-3-4b',
+                                        model_lead: 'gemma-3-12b',
+                                        model_architect: 'gemma-3-27b',
+                                        model_synthesizer: 'gemma-3-27b',
+                                        model_judge: 'gemma-3-27b',
+                                        model_manifestation: 'gemma-3-12b',
+                                        model_prism: 'gemma-3-27b'
+                                    });
+                                }}
+                                onMouseEnter={() => playHover()}
+                                className="px-2 py-1 bg-blue-900/20 border border-blue-900/50 rounded text-[10px] text-blue-400 hover:bg-blue-900/40"
+                            >
+                                Free Tier (Gemma)
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-6">
+                            {/* REFINE MODE */}
+                            <div className="space-y-2">
+                                <h4 className="text-[10px] font-bold text-emerald-500 border-b border-emerald-900/50 pb-1 mb-2">REFINE MODE (The Council)</h4>
+                                {[
+                                    { label: 'Prism (Agent Spawner)', key: 'model_prism' },
+                                    { label: 'Oracle (Interviewer)', key: 'model_oracle' },
+                                    { label: 'Domain Lead (Shared)', key: 'model_lead' },
+                                    { label: 'Specialist (Shared)', key: 'model_specialist' },
+                                    { label: 'Synthesizer (Alchemist)', key: 'model_synthesizer' },
+                                    { label: 'Judge (Tribunal)', key: 'model_judge' },
+                                ].map(({ label, key }) => (
+                                    <div key={`refine_${key}`} className="space-y-1">
+                                        <label className="text-[10px] text-emerald-600 font-bold">{label}</label>
+                                        <select
+                                            value={(settings[key as keyof AppSettings] as string) || ""}
+                                            onChange={(e) => onUpdate({ [key]: e.target.value })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            <option value="">Default ({MODELS.find(m => m.id === settings.model)?.label})</option>
+                                            {/* Show current value if it's not in the list (e.g. legacy/stale setting) */}
+                                            {settings[key as keyof AppSettings] && !MODELS.find(m => m.id === settings[key as keyof AppSettings]) && (
+                                                <option value={settings[key as keyof AppSettings] as string}>
+                                                    {settings[key as keyof AppSettings]} (Legacy/Unknown)
+                                                </option>
+                                            )}
+                                            {MODELS.filter(m => selectedProvider === 'all' || m.provider === selectedProvider).map(m => (
+                                                <option key={m.id} value={m.id}>{m.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* MANIFEST MODE */}
+                            <div className="space-y-2">
+                                <h4 className="text-[10px] font-bold text-amber-500 border-b border-amber-900/50 pb-1 mb-2">MANIFEST MODE (The Builder)</h4>
+                                {[
+                                    { label: 'Architect (Planner)', key: 'model_architect' },
+                                    { label: 'Tech Lead (Shared)', key: 'model_lead' },
+                                    { label: 'Specialist (Shared)', key: 'model_specialist' },
+                                    { label: 'Manifestation (Compiler)', key: 'model_manifestation' },
+                                ].map(({ label, key }) => (
+                                    <div key={`manifest_${key}`} className="space-y-1">
+                                        <label className="text-[10px] text-emerald-600 font-bold">{label}</label>
+                                        <select
+                                            value={(settings[key as keyof AppSettings] as string) || ""}
+                                            onChange={(e) => onUpdate({ [key]: e.target.value })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            <option value="">Default ({MODELS.find(m => m.id === settings.model)?.label})</option>
+                                            {/* Show current value if it's not in the list (e.g. legacy/stale setting) */}
+                                            {settings[key as keyof AppSettings] && !MODELS.find(m => m.id === settings[key as keyof AppSettings]) && (
+                                                <option value={settings[key as keyof AppSettings] as string}>
+                                                    {settings[key as keyof AppSettings]} (Legacy/Unknown)
+                                                </option>
+                                            )}
+                                            {MODELS.filter(m => selectedProvider === 'all' || m.provider === selectedProvider).map(m => (
+                                                <option key={m.id} value={m.id}>{m.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* MDAP PROTOCOLS */}
+                    <div className="space-y-3 pt-4 border-t border-emerald-900/30">
+                        <label className="text-xs font-bold text-emerald-700 flex items-center gap-2">
+                            <Shield className="w-3 h-3" /> MDAP PROTOCOLS
+                        </label>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
+                                <span className="text-xs text-emerald-400">Red Flagging</span>
+                                <input
+                                    type="checkbox"
+                                    checked={settings.enableRedFlagging || false}
+                                    onChange={(e) => onUpdate({ enableRedFlagging: e.target.checked })}
+                                    className="accent-emerald-500"
+                                />
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
+                                <span className="text-xs text-emerald-400">Multi-Round Voting</span>
+                                <input
+                                    type="checkbox"
+                                    checked={settings.enableMultiRoundVoting || false}
+                                    onChange={(e) => onUpdate({ enableMultiRoundVoting: e.target.checked })}
+                                    className="accent-emerald-500"
+                                />
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
+                                <span className="text-xs text-emerald-400">Agent Memory</span>
+                                <input
+                                    type="checkbox"
+                                    checked={settings.enableAgentMemory || false}
+                                    onChange={(e) => onUpdate({ enableAgentMemory: e.target.checked })}
+                                    className="accent-emerald-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-emerald-600 font-bold">Max Micro-Agent Depth</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="5"
+                                    value={settings.maxMicroAgentDepth || 3}
+                                    onChange={(e) => onUpdate({ maxMicroAgentDepth: parseInt(e.target.value) })}
+                                    className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-emerald-600 font-bold">Initial Judge Count</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="9"
+                                    value={settings.initialJudgeCount || 3}
+                                    onChange={(e) => onUpdate({ initialJudgeCount: parseInt(e.target.value) })}
+                                    className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -217,6 +368,37 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                         )}
                     </div>
 
+                    {/* USAGE METRICS */}
+                    <div className="space-y-3 pt-4 border-t border-emerald-900/30">
+                        <label className="text-xs font-bold text-emerald-700 flex items-center gap-2">
+                            <Gauge className="w-3 h-3" /> SESSION USAGE METRICS
+                        </label>
+                        <div className="bg-black border border-emerald-900 rounded p-3 text-xs max-h-40 overflow-y-auto custom-scrollbar">
+                            {Object.keys(useOuroborosStore.getState().usageMetrics || {}).length === 0 ? (
+                                <div className="text-emerald-800 italic text-center">No usage recorded this session.</div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {Object.entries(useOuroborosStore.getState().usageMetrics || {}).map(([modelId, metrics]) => (
+                                        <div key={modelId} className="flex justify-between items-center border-b border-emerald-900/30 pb-1 last:border-0">
+                                            <span className="font-bold text-emerald-500">{MODELS.find(m => m.id === modelId)?.label || modelId}</span>
+                                            <div className="text-right">
+                                                <div className="text-emerald-300">{metrics.totalTokens.toLocaleString()} tokens</div>
+                                                <div className="text-[10px] text-emerald-700">{metrics.requestCount} requests</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div className="pt-2 border-t border-emerald-500/30 flex justify-between items-center font-bold text-emerald-400">
+                                        <span>TOTAL SESSION</span>
+                                        <span>
+                                            {Object.values(useOuroborosStore.getState().usageMetrics || {})
+                                                .reduce((acc, m) => acc + m.totalTokens, 0).toLocaleString()} tokens
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
                     {/* CONCURRENCY SLIDER */}
                     <div className="space-y-3">
                         <label className="text-xs font-bold text-emerald-700 flex items-center gap-2">
@@ -253,6 +435,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                             <Upload className="w-3 h-3" /> IMPORT DB
                             <input type="file" accept=".json" onChange={handleImport} className="hidden" />
                         </label>
+                        <button
+                            onClick={() => { playClick(); engine.downloadDebugReport(); }}
+                            onMouseEnter={() => playHover()}
+                            className="col-span-2 flex items-center justify-center gap-2 p-2 bg-red-900/20 border border-red-900/50 rounded hover:bg-red-900/40 text-xs text-red-400 font-bold"
+                        >
+                            <Bug className="w-3 h-3" /> DOWNLOAD DEBUG REPORT
+                        </button>
                     </div>
                 </div>
 
@@ -315,6 +504,24 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 engine.setOpenAIKey(val);
                             }}
                             placeholder="sk-..."
+                            className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                        />
+                    </div>
+
+                    <div className="flex flex-col gap-2 p-2 bg-emerald-900/10 rounded border border-emerald-900/30 mt-2">
+                        <div className="flex flex-col">
+                            <span className="text-xs text-emerald-400 font-bold">OpenRouter API Key</span>
+                            <span className="text-[10px] text-emerald-600">Optional: For Grok, Llama 3, etc.</span>
+                        </div>
+                        <input
+                            type="password"
+                            value={settings.openRouterApiKey || ''}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                onUpdate({ openRouterApiKey: val });
+                                engine.setOpenRouterKey(val);
+                            }}
+                            placeholder="sk-or-..."
                             className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
                         />
                     </div>

@@ -18,7 +18,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
         OuroborosEngine.getInstance().updateSettings(newSettings);
     };
 
-    const [activeTab, setActiveTab] = useState<'output' | 'prompt' | 'mdap' | 'logs' | 'artifacts' | 'tribunal'>('output');
+    const [activeTab, setActiveTab] = useState<'output' | 'prompt' | 'identity' | 'mdap' | 'logs' | 'artifacts' | 'tribunal'>('output');
 
     if (!node) return null;
 
@@ -28,64 +28,73 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
     return (
         <div className="w-full node-glass border border-emerald-800/50 rounded-lg p-4 shadow-2xl max-h-[80vh] overflow-y-auto flex flex-col gap-3 bg-[#0a0a0a]/90 backdrop-blur-md pointer-events-auto">
             {/* Header */}
-            <div className="flex justify-between items-center border-b border-emerald-800/50 pb-2">
-                <div className="flex items-center gap-2 overflow-hidden">
-                    <h3 className="font-bold text-emerald-100 text-sm" title={node.label}>
-                        {node.label}
-                    </h3>
-                    {node.score !== undefined && node.score !== 0 && (
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${node.score > 80 ? 'bg-emerald-900 text-emerald-400' : 'bg-amber-900 text-amber-400'}`}>
-                            Vote: {node.score}%
-                        </span>
-                    )}
-                    <span className="text-xs text-emerald-600 ml-2">{node.persona}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="flex bg-emerald-900/30 rounded p-0.5">
-                        <button
-                            onClick={() => setActiveTab('output')}
-                            className={`px-3 py-1 text-xs rounded ${activeTab === 'output' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
-                        >
-                            Output
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('prompt')}
-                            className={`px-3 py-1 text-xs rounded ${activeTab === 'prompt' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
-                        >
-                            Prompt
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('mdap')}
-                            className={`px-3 py-1 text-xs rounded ${activeTab === 'mdap' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
-                        >
-                            MDAP
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('logs')}
-                            className={`px-3 py-1 text-xs rounded ${activeTab === 'logs' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
-                        >
-                            Logs
-                        </button>
-                        {hasArtifacts && (
-                            <button
-                                onClick={() => setActiveTab('artifacts')}
-                                className={`px-3 py-1 text-xs rounded ${activeTab === 'artifacts' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
-                            >
-                                Artifacts
-                            </button>
-                        )}
-                        {isTribunal && (
-                            <button
-                                onClick={() => setActiveTab('tribunal')}
-                                className={`px-3 py-1 text-xs rounded ${activeTab === 'tribunal' ? 'bg-emerald-800 text-white' : 'text-emerald-400 hover:text-emerald-200'}`}
-                            >
-                                Tribunal
-                            </button>
-                        )}
+            <div className="flex flex-col gap-3 border-b border-emerald-800/50 pb-3">
+                <div className="flex justify-between items-start">
+                    <div className="flex flex-col gap-1 overflow-hidden pr-4">
+                        <h3 className="font-bold text-emerald-100 text-sm leading-tight break-words" title={node.label}>
+                            {node.label}
+                        </h3>
+                        <div className="flex items-center gap-2">
+                            {node.score !== undefined && node.score !== 0 && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full ${node.score > 80 ? 'bg-emerald-900 text-emerald-400' : 'bg-amber-900 text-amber-400'}`}>
+                                    Vote: {node.score}%
+                                </span>
+                            )}
+                            <span className="text-xs text-emerald-600 capitalize">{node.type.replace('_', ' ')}</span>
+                        </div>
                     </div>
-                    <button onClick={onClose} className="text-emerald-500 hover:text-emerald-300">
+                    <button onClick={onClose} className="text-emerald-500 hover:text-emerald-300 p-1">
                         ✕
                     </button>
+                </div>
+
+                <div className="flex gap-1 flex-wrap">
+                    <button
+                        onClick={() => setActiveTab('output')}
+                        className={`px-3 py-1 text-xs rounded border transition-colors ${activeTab === 'output' ? 'bg-emerald-800 text-white border-emerald-700' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40'}`}
+                    >
+                        Output
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('prompt')}
+                        className={`px-3 py-1 text-xs rounded border transition-colors ${activeTab === 'prompt' ? 'bg-emerald-800 text-white border-emerald-700' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40'}`}
+                    >
+                        Task
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('identity')}
+                        className={`px-3 py-1 text-xs rounded border transition-colors ${activeTab === 'identity' ? 'bg-emerald-800 text-white border-emerald-700' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40'}`}
+                    >
+                        Identity
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('mdap')}
+                        className={`px-3 py-1 text-xs rounded border transition-colors ${activeTab === 'mdap' ? 'bg-emerald-800 text-white border-emerald-700' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40'}`}
+                    >
+                        MDAP
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('logs')}
+                        className={`px-3 py-1 text-xs rounded border transition-colors ${activeTab === 'logs' ? 'bg-emerald-800 text-white border-emerald-700' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40'}`}
+                    >
+                        Logs
+                    </button>
+                    {hasArtifacts && (
+                        <button
+                            onClick={() => setActiveTab('artifacts')}
+                            className={`px-3 py-1 text-xs rounded border transition-colors ${activeTab === 'artifacts' ? 'bg-emerald-800 text-white border-emerald-700' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40'}`}
+                        >
+                            Artifacts
+                        </button>
+                    )}
+                    {isTribunal && (
+                        <button
+                            onClick={() => setActiveTab('tribunal')}
+                            className={`px-3 py-1 text-xs rounded border transition-colors ${activeTab === 'tribunal' ? 'bg-emerald-800 text-white border-emerald-700' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40'}`}
+                        >
+                            Tribunal
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -103,8 +112,12 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
                     <div className="text-xs text-emerald-200/80 whitespace-pre-wrap leading-relaxed font-mono bg-black/20 p-2 rounded border border-emerald-900/30">
                         {node.instruction}
                     </div>
+                ) : activeTab === 'identity' ? (
+                    <div className="text-xs text-emerald-200/80 whitespace-pre-wrap leading-relaxed font-mono bg-black/20 p-2 rounded border border-emerald-900/30">
+                        {node.persona}
+                    </div>
                 ) : activeTab === 'mdap' ? (
-                    <MDAPPanel node={node} settings={settings} onUpdateSettings={onUpdateSettings} />
+                    <MDAPPanel node={node} />
                 ) : activeTab === 'artifacts' ? (
                     <ArtifactsPanel artifacts={node.artifacts} />
                 ) : activeTab === 'tribunal' ? (
@@ -145,77 +158,13 @@ const NodeLogsPanel: React.FC<NodeLogsPanelProps> = ({ logs, nodeId }) => {
 
 interface MDAPPanelProps {
     node: Node;
-    settings: AppSettings;
-    onUpdateSettings: (settings: AppSettings) => void;
 }
 
-const MDAPPanel: React.FC<MDAPPanelProps> = ({ node, settings, onUpdateSettings }) => {
+const MDAPPanel: React.FC<MDAPPanelProps> = ({ node }) => {
     return (
         <div className="flex flex-col gap-4">
-            {/* Controls */}
-            <div className="grid grid-cols-2 gap-4 p-2 bg-emerald-900/20 rounded border border-emerald-800/30">
-                <div className="flex items-center justify-between">
-                    <span className="text-xs text-emerald-400">Enable MDAP</span>
-                    <input
-                        type="checkbox"
-                        checked={settings.enableRedFlagging} // Assuming MDAP implies Red Flagging + others for now, or we can add a specific MDAP toggle if needed. 
-                        // Actually, MVP_TASKS says "Enable MDAP" control. I should probably add a specific setting or use a combination. 
-                        // For now, let's assume it toggles the suite of features.
-                        onChange={(e) => onUpdateSettings({ ...settings, enableRedFlagging: e.target.checked, enableMultiRoundVoting: e.target.checked, enableAgentMemory: e.target.checked })}
-                        className="accent-emerald-500"
-                    />
-                </div>
-                <div className="flex items-center justify-between">
-                    <span className="text-xs text-emerald-400">Red Flagging</span>
-                    <input
-                        type="checkbox"
-                        checked={settings.enableRedFlagging}
-                        onChange={(e) => onUpdateSettings({ ...settings, enableRedFlagging: e.target.checked })}
-                        className="accent-emerald-500"
-                    />
-                </div>
-                <div className="flex items-center justify-between">
-                    <span className="text-xs text-emerald-400">Voting Rounds</span>
-                    <input
-                        type="checkbox"
-                        checked={settings.enableMultiRoundVoting}
-                        onChange={(e) => onUpdateSettings({ ...settings, enableMultiRoundVoting: e.target.checked })}
-                        className="accent-emerald-500"
-                    />
-                </div>
-                <div className="flex items-center justify-between">
-                    <span className="text-xs text-emerald-400">Agent Memory</span>
-                    <input
-                        type="checkbox"
-                        checked={settings.enableAgentMemory}
-                        onChange={(e) => onUpdateSettings({ ...settings, enableAgentMemory: e.target.checked })}
-                        className="accent-emerald-500"
-                    />
-                </div>
-                <div className="flex items-center justify-between col-span-2 border-t border-emerald-800/30 pt-2 mt-1">
-                    <span className="text-xs text-emerald-400">Max Micro-Agent Depth</span>
-                    <input
-                        type="number"
-                        min="1"
-                        max="5"
-                        value={settings.maxMicroAgentDepth || 3}
-                        onChange={(e) => onUpdateSettings({ ...settings, maxMicroAgentDepth: parseInt(e.target.value) })}
-                        className="w-12 bg-emerald-900/50 border border-emerald-700 text-emerald-100 text-xs rounded px-1"
-                    />
-                </div>
-                <div className="flex items-center justify-between col-span-2">
-                    <span className="text-xs text-emerald-400">Initial Judge Count</span>
-                    <input
-                        type="number"
-                        min="1"
-                        max="9"
-                        step="2"
-                        value={settings.initialJudgeCount || 3}
-                        onChange={(e) => onUpdateSettings({ ...settings, initialJudgeCount: parseInt(e.target.value) })}
-                        className="w-12 bg-emerald-900/50 border border-emerald-700 text-emerald-100 text-xs rounded px-1"
-                    />
-                </div>
-            </div>
+            {/* Visualization Only - Settings moved to Global Settings Panel */}
+
 
             {/* Visualization */}
             <div className="flex flex-col gap-2">

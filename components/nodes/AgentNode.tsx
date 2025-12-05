@@ -27,7 +27,7 @@ const AgentNode = ({ data, selected }: NodeProps) => {
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.3 }}
             className={clsx(
-                "relative min-w-[200px] rounded-lg border backdrop-blur-md transition-all duration-300",
+                "relative w-[240px] rounded-lg border backdrop-blur-md transition-all duration-300",
                 "flex flex-col overflow-hidden shadow-xl",
                 selected ? "border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.3)]" : "border-emerald-900/50 hover:border-emerald-500/50",
                 isProcessing ? "bg-emerald-950/80" : "bg-[#0a0a0a]/90",
@@ -76,7 +76,7 @@ const AgentNode = ({ data, selected }: NodeProps) => {
                 {data.instruction && (
                     <div className="mt-2 pt-2 border-t border-emerald-900/30">
                         <span className="opacity-50 block mb-1">PROMPT:</span>
-                        <div className="max-h-16 overflow-y-auto nodrag text-[9px] text-emerald-200/60 bg-black/20 p-1 rounded border border-emerald-900/20">
+                        <div className="text-[9px] text-emerald-200/60 bg-black/20 p-1 rounded border border-emerald-900/20 line-clamp-3 break-words" title={data.instruction}>
                             {data.instruction}
                         </div>
                     </div>
