@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal } from 'lucide-react';
+import { Terminal, Trash2 } from 'lucide-react';
 import { LogEntry } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
+import { OuroborosEngine } from '../engine/OuroborosEngine';
 
 interface LogViewerProps {
     logs?: LogEntry[];
@@ -69,6 +70,14 @@ export const LogViewer: React.FC<LogViewerProps> = () => {
                             {f}
                         </button>
                     ))}
+                    <div className="w-px h-4 bg-emerald-900/50 mx-1" />
+                    <button
+                        onClick={() => OuroborosEngine.getInstance().clearLogs()}
+                        className="text-emerald-700 hover:text-red-400 transition-colors px-1"
+                        title="Clear Logs"
+                    >
+                        <Trash2 className="w-3 h-3" />
+                    </button>
                 </div>
             </div>
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-1 custom-scrollbar">

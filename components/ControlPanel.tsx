@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, RefreshCw, Flame, Workflow, CheckCircle, StopCircle, RotateCcw, Sparkles, Download, Play, Eye, Edit2, ChevronRight } from 'lucide-react';
+import { Settings, RefreshCw, Flame, Workflow, CheckCircle, StopCircle, RotateCcw, Sparkles, Download, Play, Eye, Edit2, ChevronRight, Trash2 } from 'lucide-react';
 import { AppMode, LogEntry } from '../types';
 import { DEPARTMENTS } from '../constants';
 import { useOuroborosStore } from '../store/ouroborosStore';
@@ -244,6 +244,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                                 >
                                     <Sparkles className="w-4 h-4" />
                                 </button>
+                                <button
+                                    onClick={() => {
+                                        playClick();
+                                        if (confirm("Clear Prima Materia?")) {
+                                            setDocumentContent('');
+                                        }
+                                    }}
+                                    onMouseEnter={() => playHover()}
+                                    className="text-emerald-700 hover:text-red-400 p-1 rounded hover:bg-emerald-900/20 transition-colors"
+                                    title="Clear Input"
+                                >
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
                                 <div className="w-px h-4 bg-emerald-900/50 mx-1" />
                                 <button
                                     onClick={() => { playClick(); setViewMode(viewMode === 'edit' ? 'preview' : 'edit'); }}
@@ -286,7 +299,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                         {/* MANIFEST CONTROLS */}
                         <div className="flex justify-between items-center mb-2">
                             <span className="text-xs font-bold text-amber-600 tracking-wider">MANIFESTATION LOG</span>
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 items-center">
+                                <button
+                                    onClick={() => {
+                                        playClick();
+                                        if (confirm("Clear Manifestation?")) {
+                                            useOuroborosStore.getState().setProjectPlan([]);
+                                            useOuroborosStore.getState().setManifestation(null);
+                                        }
+                                    }}
+                                    onMouseEnter={() => playHover()}
+                                    className="text-amber-700 hover:text-red-400 p-1 rounded hover:bg-amber-900/20 transition-colors mr-1"
+                                    title="Clear Plan"
+                                >
+                                    <Trash2 className="w-3 h-3" />
+                                </button>
                                 {/* TRANSFORM TOGGLE */}
                                 {projectPlan.length > 0 && (
                                     <button

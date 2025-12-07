@@ -6,6 +6,11 @@ interface OuroborosState {
     status: 'idle' | 'thinking' | 'paused';
     setStatus: (status: 'idle' | 'thinking' | 'paused') => void;
 
+    // Session State
+    currentSessionId: string | null;
+    currentSessionName: string | null;
+    setCurrentSession: (id: string | null, name: string | null) => void;
+
     // App Data
     documentContent: string;
     setDocumentContent: (content: string) => void;
@@ -51,6 +56,11 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
     // Status
     status: 'idle',
     setStatus: (status) => set({ status }),
+
+    // Session State
+    currentSessionId: null,
+    currentSessionName: null,
+    setCurrentSession: (id, name) => set({ currentSessionId: id, currentSessionName: name }),
 
     // App Data
     documentContent: '',
@@ -123,5 +133,15 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
     resetOracle: () => set({ oracleChatHistory: [], clarityScore: 0, isOracleActive: false, fusedContext: null }),
 
     // Reset
-    resetSession: () => set({ status: 'idle', projectPlan: [] }),
+    resetSession: () => set({
+        status: 'idle',
+        documentContent: '', // Wipe Prima Materia
+        manifestation: null, // Wipe Manifestation
+        projectPlan: [],
+        // Critical: Wipe Oracle state on new session start to prevent "Ghost Context"
+        oracleChatHistory: [],
+        clarityScore: 0,
+        isOracleActive: false,
+        fusedContext: null
+    }),
 }));

@@ -303,6 +303,9 @@ export interface AppSettings {
   // Local LLM Config
   localBaseUrl?: string;
   localModelId?: string;
+
+  // New settings
+  consensusThreshold?: number; // Tribunal passing score (0-100)
 }
 
 // --- THE ORACLE (Requirements 3.0) ---

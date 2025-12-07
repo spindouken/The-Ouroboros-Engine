@@ -1,5 +1,5 @@
 import Dexie, { Table } from 'dexie';
-import { Node, LogEntry, AgentMemory, AppSettings, KnowledgeNode, PlanItem } from '../types';
+import { Node, LogEntry, AgentMemory, AppSettings, KnowledgeNode, PlanItem, OracleMessage, OracleContext } from '../types';
 
 // Define interfaces for our tables
 // We extend existing types where possible to maintain consistency with the application
@@ -35,10 +35,23 @@ export interface DBProject {
     name: string;
     createdAt: number;
     updatedAt: number;
+
+    // --- Store State ---
     documentContent: string;
     projectPlan: PlanItem[];
     manifestation?: string | null;
     council: any;
+    oracle: {
+        history: OracleMessage[];
+        clarityScore: number;
+        isActive: boolean;
+        fusedContext: OracleContext | null; // OracleContext from types
+    };
+
+    // --- Graph State ---
+    nodes: DBNode[];
+    edges: DBEdge[];
+    logs: DBLog[];
 }
 
 export interface DBSettings extends AppSettings {
