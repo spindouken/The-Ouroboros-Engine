@@ -14,16 +14,20 @@ export class UnifiedLLMClient {
     private googleClient: GoogleGenAI | null = null;
     private openaiApiKey: string | null = null;
     private openRouterApiKey: string | null = null;
+    private localBaseUrl: string = 'http://localhost:11434/v1';
+    private localModelId: string = 'gemma:7b';
 
-    constructor(googleKey?: string, openaiKey?: string, openRouterKey?: string) {
+    constructor(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string) {
         if (googleKey) {
             this.googleClient = new GoogleGenAI({ apiKey: googleKey });
         }
         this.openaiApiKey = openaiKey || null;
         this.openRouterApiKey = openRouterKey || null;
+        if (localBaseUrl) this.localBaseUrl = localBaseUrl;
+        if (localModelId) this.localModelId = localModelId;
     }
 
-    public updateKeys(googleKey?: string, openaiKey?: string, openRouterKey?: string) {
+    public updateKeys(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string) {
         if (googleKey) {
             this.googleClient = new GoogleGenAI({ apiKey: googleKey });
         }
@@ -32,6 +36,12 @@ export class UnifiedLLMClient {
         }
         if (openRouterKey !== undefined) {
             this.openRouterApiKey = openRouterKey;
+        }
+        if (localBaseUrl !== undefined) {
+            this.localBaseUrl = localBaseUrl;
+        }
+        if (localModelId !== undefined) {
+            this.localModelId = localModelId;
         }
     }
 
@@ -47,6 +57,8 @@ export class UnifiedLLMClient {
                         provider = 'openrouter';
                     } else if (params.model.startsWith('gpt-') || params.model.startsWith('o1-')) {
                         provider = 'openai';
+                    } else if (params.model === 'local-custom') {
+                        provider = 'local';
                     } else {
                         provider = 'google'; // Default fallback
                     }
@@ -57,11 +69,57 @@ export class UnifiedLLMClient {
                     return this.callOpenAI(params);
                 } else if (provider === 'openrouter') {
                     return this.callOpenRouter(params);
+                } else if (provider === 'local') {
+                    return this.callLocal(params);
                 } else {
                     return this.callGoogle(params);
                 }
             }
         };
+    }
+
+    private async callLocal(params: { model: string, contents: string, config?: any }): Promise<LLMResponse> {
+        try {
+            const isJson = params.config?.responseMimeType === "application/json";
+
+            // Use the configured local model ID instead of 'local-custom'
+            const actualModel = this.localModelId;
+
+            const response = await fetch(`${this.localBaseUrl}/chat/completions`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    // Ollama doesn't need an API key, but some local servers might expect a dummy one
+                    "Authorization": "Bearer local-dummy-key"
+                },
+                body: JSON.stringify({
+                    model: actualModel,
+                    messages: [{ role: "user", content: params.contents }],
+                    temperature: params.config?.temperature ?? 0.7,
+                    response_format: isJson ? { type: "json_object" } : undefined
+                })
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Local API Error (${response.status}): ${errText}`);
+            }
+
+            const data = await response.json();
+            const content = data.choices?.[0]?.message?.content || "";
+
+            const usage = data.usage ? {
+                promptTokens: data.usage.prompt_tokens || 0,
+                completionTokens: data.usage.completion_tokens || 0,
+                totalTokens: data.usage.total_tokens || 0
+            } : undefined;
+
+            return { text: content, usage };
+
+        } catch (error: any) {
+            console.error("Local API Error:", error);
+            throw new Error(`Local API Error: ${error.message || error} (Check if Ollama is running and OLLAMA_ORIGINS is set)`);
+        }
     }
 
     private async callOpenRouter(params: { model: string, contents: string, config?: any }): Promise<LLMResponse> {
@@ -182,3 +240,4 @@ export class UnifiedLLMClient {
         }
     }
 }
+

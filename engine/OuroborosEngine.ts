@@ -51,6 +51,10 @@ export class OuroborosEngine {
         this.ai.updateKeys(apiKey);
     }
 
+    public updateKeys(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string) {
+        this.ai.updateKeys(googleKey, openaiKey, openRouterKey, localBaseUrl, localModelId);
+    }
+
     public async updateSettings(newSettings: Partial<AppSettings>) {
         // Update Store
         useOuroborosStore.getState().updateSettings(newSettings);
@@ -85,6 +89,25 @@ export class OuroborosEngine {
     // --- SESSION MANAGEMENT ---
 
     public async loadSession(sessionId: string = 'current_session') {
+        // 1. Load Settings first to ensure engine is configured
+        const settings = await db.settings.get(1);
+        if (settings) {
+            useOuroborosStore.getState().updateSettings(settings);
+            this.rateLimiter.updateConfig({
+                rpm: settings.rpm,
+                rpd: settings.rpd,
+                enabled: true
+            });
+            this.apiSemaphore.max = settings.concurrency;
+            this.ai.updateKeys(
+                settings.apiKey,
+                settings.openaiApiKey,
+                settings.openRouterApiKey,
+                settings.localBaseUrl,
+                settings.localModelId
+            );
+        }
+
         const project = await db.projects.get(sessionId);
         if (project) {
             useOuroborosStore.getState().setDocumentContent(project.documentContent);
@@ -688,7 +711,7 @@ export class OuroborosEngine {
             const googleKey = this.apiKey || process.env.API_KEY || "";
             const openaiKey = this.openaiApiKey || process.env.OPENAI_API_KEY || "";
             const openRouterKey = settings.openRouterApiKey || process.env.OPENROUTER_API_KEY || "";
-            this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined);
+            this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined, settings.localBaseUrl, settings.localModelId);
 
             const ai = this.ai;
             let selectedModel = settings.model;
@@ -1209,23 +1232,6 @@ ${proof}
                 }
             }
         });
-    }
-
-    private extractJson(text: string): any {
-        try {
-            const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
-            return JSON.parse(clean);
-        } catch (e) {
-            return null;
-        }
-    }
-
-    private async callLLM(model: string, prompt: string, config?: any): Promise<LLMResponse> {
-        const resp = await this.ai.models.generateContent({
-            model: model,
-            contents: prompt,
-            config: config
-        });
         if (resp.usage) {
             useOuroborosStore.getState().addUsage(model, resp.usage);
         }
@@ -1738,6 +1744,43 @@ ${node.debugData.rawResponse || 'N/A'}
                 await db.edges.bulkDelete(edgesToDelete);
             }
         }
+    }
+
+    private extractJson(text: string): any {
+        try {
+            // 1. Try standard parsing first (cleanest case)
+            const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            try {
+                return JSON.parse(clean);
+            } catch (e) {
+                // Continue to advanced extraction
+            }
+
+            // 2. Advanced Extraction: Find the first '{' and the last '}'
+            const firstOpen = text.indexOf('{');
+            const lastClose = text.lastIndexOf('}');
+
+            if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+                const jsonCandidate = text.substring(firstOpen, lastClose + 1);
+                return JSON.parse(jsonCandidate);
+            }
+
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    private async callLLM(model: string, prompt: string, config?: any): Promise<LLMResponse> {
+        const resp = await this.ai.models.generateContent({
+            model: model,
+            contents: prompt,
+            config: config
+        });
+        if (resp.usage) {
+            useOuroborosStore.getState().addUsage(model, resp.usage);
+        }
+        return resp;
     }
 
     // --- SEMAPHORE ---

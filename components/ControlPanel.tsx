@@ -59,23 +59,18 @@ const TaskListViewer: React.FC<{ tasks: any[] }> = ({ tasks }) => {
 
 // --- CYBERPUNK MARKDOWN RENDERER ---
 const CyberpunkPreview: React.FC<{ content: string }> = ({ content }) => {
-    // 1. Unwrap Markdown Code Fences if present
-    let cleanContent = content;
-    const codeFenceRegex = /```markdown\s*([\s\S]*?)\s*```/i;
-    const match = content.match(codeFenceRegex);
-    if (match) {
-        cleanContent = match[1];
-    }
-    // Also handle generic code fences if they wrap the whole content
-    if (cleanContent.startsWith('```') && cleanContent.endsWith('```')) {
-        cleanContent = cleanContent.replace(/^```[a-z]*\n/, '').replace(/```$/, '');
-    }
+    // 1. Clean up code fences but PRESERVE content
+    // We remove the ``` wrapper lines but keep the text inside and around them
+    // This allows mixed content (multiple blocks, or text outside blocks) to render fully
+    const cleanContent = content
+        .replace(/^```[\w-]*\s*$/gm, '') // Remove opening/closing fences on their own lines
+        .trim();
 
     // 2. Simple Line-by-Line Parser (Cyberpunk Style)
     const lines = cleanContent.split('\n');
 
     return (
-        <div className="flex-1 bg-[#050505] p-4 font-mono text-sm mb-4">
+        <div className="w-full bg-[#050505] p-4 font-mono text-sm whitespace-pre-wrap break-words">
             {lines.map((line, idx) => {
                 // H1
                 if (line.startsWith('# ')) {

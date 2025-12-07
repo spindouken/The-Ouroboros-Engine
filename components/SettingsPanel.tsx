@@ -525,6 +525,65 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                             className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
                         />
                     </div>
+
+                    {/* LOCAL INFERENCE (OLLAMA) */}
+                    <div className="flex flex-col gap-2 p-2 bg-emerald-900/10 rounded border border-emerald-900/30 mt-2">
+                        <div className="flex flex-col">
+                            <span className="text-xs text-emerald-400 font-bold">Local Inference (Ollama)</span>
+                            <span className="text-[10px] text-emerald-600">Run models locally. Requires `OLLAMA_ORIGINS="*"`</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-emerald-600 font-bold">Base URL</label>
+                                <input
+                                    type="text"
+                                    value={settings.localBaseUrl || 'http://localhost:11434/v1'}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        onUpdate({ localBaseUrl: val });
+                                        // We need to update the engine client too, but we'll do it via a useEffect or direct call if needed
+                                        // For now, let's assume engine.updateSettings handles it or we add a specific setter
+                                        engine.updateKeys(undefined, undefined, undefined, val, undefined);
+                                    }}
+                                    placeholder="http://localhost:11434/v1"
+                                    className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-emerald-600 font-bold">Model ID</label>
+                                <input
+                                    type="text"
+                                    value={settings.localModelId || 'gemma:7b'}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        onUpdate({ localModelId: val });
+                                        engine.updateKeys(undefined, undefined, undefined, undefined, val);
+                                    }}
+                                    placeholder="gemma:7b"
+                                    className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                />
+                            </div>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                playClick();
+                                const url = (settings.localBaseUrl || 'http://localhost:11434/v1').replace('/v1', '');
+                                try {
+                                    const res = await fetch(url);
+                                    if (res.ok) {
+                                        alert("Connection Successful! Ollama is running.");
+                                    } else {
+                                        alert(`Connection Failed: ${res.status} ${res.statusText}`);
+                                    }
+                                } catch (e: any) {
+                                    alert(`Connection Failed: ${e.message}. Check OLLAMA_ORIGINS env var.`);
+                                }
+                            }}
+                            className="mt-2 px-3 py-1 bg-emerald-900/30 hover:bg-emerald-900/50 border border-emerald-900/50 rounded text-[10px] text-emerald-400"
+                        >
+                            Test Connection
+                        </button>
+                    </div>
                     <div className="p-2 bg-amber-900/10 border border-amber-900/30 rounded text-[10px] text-amber-500/80 italic">
                         Disclaimer: All data is stored locally in your browser (IndexedDB). Clearing browser data will wipe your Ouroboros sessions.
                     </div>

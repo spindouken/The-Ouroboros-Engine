@@ -81,7 +81,9 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         gitIntegration: false,
         redTeamMode: false,
         debugMode: false,
-        model_manifestation: 'gemini-2.0-flash-exp'
+        model_manifestation: 'gemini-2.0-flash-exp',
+        localBaseUrl: 'http://localhost:11434/v1',
+        localModelId: 'gemma:7b'
     },
     updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
 

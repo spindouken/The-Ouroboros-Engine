@@ -299,6 +299,10 @@ export interface AppSettings {
   model_manifestation?: string;
   model_prism?: string;
   model_oracle?: string;
+
+  // Local LLM Config
+  localBaseUrl?: string;
+  localModelId?: string;
 }
 
 // --- THE ORACLE (Requirements 3.0) ---

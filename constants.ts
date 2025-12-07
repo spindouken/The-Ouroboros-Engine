@@ -75,4 +75,7 @@ export const MODELS = [
     { id: 'x-ai/grok-4.1-fast:free', label: 'Grok Beta (Free)', desc: 'OpenRouter Free Tier', rpm: 20, rpd: 50, provider: 'openrouter' },
     { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (OR Free)', desc: 'OpenRouter Free Tier', rpm: 20, rpd: 50, provider: 'openrouter' },
     { id: 'openai/gpt-oss-20b:free', label: 'GPT-OSS 20B (Free)', desc: 'OpenRouter Free Tier with Reasoning', rpm: 20, rpd: 50, provider: 'openrouter' },
+
+    // Local / Custom
+    { id: 'local-custom', label: 'Local / Custom (Ollama)', desc: 'Runs on your machine via Ollama', rpm: 9999, rpd: 9999, provider: 'local' },
 ];
