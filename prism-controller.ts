@@ -64,61 +64,90 @@ export class PrismController {
 
             console.log(`[Prism] Analyzing task for department: ${department || 'General'} using model: ${model}`);
 
-            const responsePromise = ai.models.generateContent({
-                model: model,
-                contents: prompt,
-                config: { responseMimeType: "application/json" }
-            });
+            // Retry Logic: Smart Backoff (3s, 6s, 12s, 24s, 30s)
+            let attempts = 0;
+            const backoffDelays = [3000, 6000, 12000, 24000, 30000, 30000]; // ms
+            const maxAttempts = backoffDelays.length;
 
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Prism Analysis Timed Out (30s)")), 30000)
-            );
+            while (attempts < maxAttempts) {
+                // If this is a retry, wait before keying the engine again
+                if (attempts > 0) {
+                    const waitTime = backoffDelays[attempts - 1]; // Use previous attempt's index for delay
+                    console.log(`[Prism] Retrying in ${waitTime / 1000}s...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                }
 
-            const response: any = await Promise.race([responsePromise, timeoutPromise]);
+                attempts++;
+                try {
+                    const responsePromise = ai.models.generateContent({
+                        model: model,
+                        contents: prompt,
+                        config: { responseMimeType: "application/json" }
+                    });
 
-            console.log(`[Prism] Analysis complete for ${department || 'General'}`);
+                    // Increased timeout for slower models
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error(`Prism Analysis Timed Out (${60 * attempts}s)`)), 60000 * attempts)
+                    );
 
-            const text = response.text || "[]";
+                    const response: any = await Promise.race([responsePromise, timeoutPromise]);
 
-            // STABILITY FIX: Extract JSON from code blocks or raw text
-            // This prevents "Chatty" LLM responses from breaking the parser and triggering the single-node fallback.
-            const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
-            const jsonString = jsonMatch ? jsonMatch[1] : text;
+                    console.log(`[Prism] Analysis complete for ${department || 'General'} (Attempt ${attempts})`);
 
-            const json = JSON.parse(jsonString.trim());
+                    const text = response.text || "[]";
+                    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
+                    const jsonString = jsonMatch ? jsonMatch[1] : text;
 
-            if (!Array.isArray(json)) {
-                console.warn("Prism analysis returned invalid format", json);
-                return [];
+                    const json = JSON.parse(jsonString.trim());
+
+                    if (Array.isArray(json) && json.length > 0) {
+                        // CAP the number of agents to max 7 to prevent explosion, min 1
+                        const cappedAgents = json.slice(0, 7);
+
+                        // SANITIZATION: Fix swapped Role/Persona
+                        return cappedAgents.map((agent: any) => {
+                            if (agent.role && agent.role.length > 50 && agent.persona && agent.persona.length < 50) {
+                                return { ...agent, role: agent.persona, persona: agent.role };
+                            }
+                            if (agent.role && agent.role.length > 50) {
+                                agent.role = agent.role.substring(0, 47) + "...";
+                            }
+                            return agent;
+                        }) as AgentConfig[];
+                    } else {
+                        throw new Error("Invalid JSON array format");
+                    }
+                } catch (e) {
+                    console.warn(`[Prism] Attempt ${attempts} failed:`, e);
+                    if (attempts >= maxAttempts) throw e;
+                }
             }
-
-            // SANITIZATION: Fix swapped Role/Persona
-            const sanitizedAgents = json.map((agent: any) => {
-                // If role is very long (>50 chars) and persona is short (<50 chars), swap them
-                if (agent.role && agent.role.length > 50 && agent.persona && agent.persona.length < 50) {
-                    console.warn(`[Prism] Swapping Role/Persona for ${agent.id}`);
-                    return { ...agent, role: agent.persona, persona: agent.role };
-                }
-                // If role is still too long, truncate it
-                if (agent.role && agent.role.length > 50) {
-                    agent.role = agent.role.substring(0, 47) + "...";
-                }
-                return agent;
-            });
-
-            return sanitizedAgents as AgentConfig[];
-
+            return []; // Should be unreachable given throw above
         } catch (error) {
-            console.error("Prism analysis failed", error);
-            // Fallback to default agents if analysis fails
-            const dept = department || 'general';
+            console.error("Prism analysis failed completely. Using Fallback Squad.", error);
+            // Fallback to DEFAULT SQUAD (3 Agents) instead of just 1
+            const dept = department || 'General';
             return [
                 {
-                    id: `${dept}_specialist`,
+                    id: `${dept}_specialist_lead`,
                     role: `${dept.charAt(0).toUpperCase() + dept.slice(1)} Specialist`,
-                    persona: `You are a skilled ${dept} expert.`,
+                    persona: `You are a skilled ${dept} expert focused on implementation details.`,
                     capabilities: ["code_gen"],
                     temperature: 0.7
+                },
+                {
+                    id: `${dept}_critic`,
+                    role: `${dept.charAt(0).toUpperCase() + dept.slice(1)} Critic`,
+                    persona: `You are a ${dept} reviewer. Find flaws, edge cases, and security risks.`,
+                    capabilities: ["review"],
+                    temperature: 0.4
+                },
+                {
+                    id: `${dept}_visionary`,
+                    role: `${dept.charAt(0).toUpperCase() + dept.slice(1)} Strategist`,
+                    persona: `You are a forward-thinking ${dept} visionary. Align with the user's high-level goals.`,
+                    capabilities: ["planning"],
+                    temperature: 0.8
                 }
             ];
         }
