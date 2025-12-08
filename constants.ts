@@ -76,6 +76,66 @@ export const MODELS = [
     { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (OR Free)', desc: 'OpenRouter Free Tier', rpm: 20, rpd: 50, provider: 'openrouter' },
     { id: 'openai/gpt-oss-20b:free', label: 'GPT-OSS 20B (Free)', desc: 'OpenRouter Free Tier with Reasoning', rpm: 20, rpd: 50, provider: 'openrouter' },
 
+    // Added OpenRouter Free Models
+    { id: 'google/gemma-3n-e2b-it:free', label: 'Gemma 3n e2b', desc: 'Google (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'google/gemma-3n-e4b-it:free', label: 'Gemma 3n e4b', desc: 'Google (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'arcee-ai/trinity-mini:free', label: 'Trinity Mini', desc: 'Arcee AI (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'qwen/qwen3-4b:free', label: 'Qwen 3 4B', desc: 'Qwen (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'mistralai/mistral-7b-instruct:free', label: 'Mistral 7B', desc: 'Mistral AI (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', desc: 'Meta (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'google/gemma-3-27b-it:free', label: 'Gemma 3 27B IT', desc: 'Google (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'meta-llama/llama-3.2-3b-instruct:free', label: 'Llama 3.2 3B', desc: 'Meta (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'moonshotai/kimi-k2:free', label: 'Kimi k2', desc: 'Moonshot AI (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'amazon/nova-2-lite-v1:free', label: 'Nova 2 Lite', desc: 'Amazon (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', label: 'Dolphin Mistral 24B', desc: 'Cognitive Comp. (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'allenai/olmo-3-32b-think:free', label: 'OLMo 3 32B', desc: 'Allen AI (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'nvidia/nemotron-nano-9b-v2:free', label: 'Nemotron Nano 9B', desc: 'Nvidia (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'mistralai/mistral-small-3.1-24b-instruct:free', label: 'Mistral Small 3.1 24B', desc: 'Mistral AI (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'kwaipilot/kat-coder-pro:free', label: 'Kat Coder Pro', desc: 'KwaiPilot (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'openai/gpt-oss-120b:free', label: 'GPT-OSS 120B', desc: 'OpenAI (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'qwen/qwen3-235b-a22b:free', label: 'Qwen 3 235B', desc: 'Qwen (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'google/gemma-3-12b-it:free', label: 'Gemma 3 12B IT', desc: 'Google (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+    { id: 'google/gemma-3-4b-it:free', label: 'Gemma 3 4B IT', desc: 'Google (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
+
     // Local / Custom
     { id: 'local-custom', label: 'Local / Custom (Ollama)', desc: 'Runs on your machine via Ollama', rpm: 9999, rpd: 9999, provider: 'local' },
 ];
+
+export const MODEL_TIERS = {
+    'S_TIER': ['gemini-2.5-pro', 'gpt-4o', 'gpt-5.1', 'o1', 'claude-3-5-sonnet'],
+    'A_TIER': ['gemini-2.5-flash', 'gpt-4o-mini', 'gpt-5-mini', 'claude-3-haiku'],
+    'B_TIER': [
+        'gemini-2.5-flash-lite',
+        'gemma-3-12b',
+        'local-custom',
+        'x-ai/grok-4.1-fast:free',
+        'google/gemini-2.0-flash-exp:free',
+        'openai/gpt-oss-20b:free',
+        'google/gemma-3n-e2b-it:free',
+        'google/gemma-3n-e4b-it:free',
+        'arcee-ai/trinity-mini:free',
+        'qwen/qwen3-4b:free',
+        'mistralai/mistral-7b-instruct:free',
+        'meta-llama/llama-3.3-70b-instruct:free',
+        'google/gemma-3-27b-it:free',
+        'meta-llama/llama-3.2-3b-instruct:free',
+        'moonshotai/kimi-k2:free',
+        'amazon/nova-2-lite-v1:free',
+        'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+        'allenai/olmo-3-32b-think:free',
+        'nvidia/nemotron-nano-9b-v2:free',
+        'mistralai/mistral-small-3.1-24b-instruct:free',
+        'kwaipilot/kat-coder-pro:free',
+        'openai/gpt-oss-120b:free',
+        'qwen/qwen3-235b-a22b:free',
+        'google/gemma-3-12b-it:free',
+        'google/gemma-3-4b-it:free'
+    ]
+};
+
+export const DEFAULT_HYDRA_SETTINGS = {
+    autoFailover: true,
+    maxRetries: 2,
+    fallbackStrategy: 'cost' as const
+};
+

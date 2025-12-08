@@ -94,6 +94,11 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
                         stroke = "#ef4444"; // Red for critique
                         animateClass = "animate-pulse";
                     }
+                    if (node.status === 'distress') {
+                        stroke = "#f59e0b"; // Amber
+                        fill = "#78350f"; // Dark Amber
+                        animateClass = "animate-pulse";
+                    }
 
                     if (isSelected) stroke = "#fff";
 

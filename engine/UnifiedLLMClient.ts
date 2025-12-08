@@ -1,8 +1,17 @@
 import { GoogleGenAI } from "@google/genai";
-import { MODELS } from "../constants";
+import { MODELS, MODEL_TIERS } from "../constants";
+import { PenaltyBoxRegistry } from "./PenaltyBoxRegistry";
+
+export class AllHeadsSeveredError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'AllHeadsSeveredError';
+    }
+}
 
 export interface LLMResponse {
     text: string;
+    modelUsed?: string;
     usage?: {
         promptTokens: number;
         completionTokens: number;
@@ -45,6 +54,69 @@ export class UnifiedLLMClient {
         }
     }
 
+    /**
+     * Executes an LLM call with Hydra Failover Protocol.
+     * Iterates through the provided model list (tier) and handles retries/failover.
+     */
+
+    public async executeWithHydra(
+        models: string[],
+        prompt: string,
+        config: any,
+        box: PenaltyBoxRegistry,
+        onRetry?: (model: string, error: any) => void
+    ): Promise<LLMResponse> {
+        let lastError: any = null;
+        let attemptedCount = 0;
+
+        for (const modelId of models) {
+            // 1. Check Penalty Box
+            if (box.isRateLimited(modelId)) {
+                console.warn(`[Hydra] Skipping ${modelId} (Penalty Box)`);
+                continue;
+            }
+
+            // 2. Attempt Call
+            try {
+                attemptedCount++;
+                const response = await this.models.generateContent({
+                    model: modelId,
+                    contents: prompt,
+                    config: config
+                });
+                // Tag the response with the model that actually succeeded
+                console.log(`[Hydra] Success with ${modelId}`);
+                return { ...response, modelUsed: modelId };
+            } catch (error: any) {
+                lastError = error;
+                const errMsg = error.message || '';
+                const isRateLimit = errMsg.includes('429') || errMsg.includes('Quota') || errMsg.includes('quota') || errMsg.includes('Too Many Requests');
+                const isServerError = errMsg.includes('500') || errMsg.includes('502') || errMsg.includes('503') || errMsg.includes('Overloaded');
+                const isNotFound = errMsg.includes('404') || errMsg.includes('Not Found');
+
+                if (isRateLimit || isServerError || isNotFound) {
+                    // Log and Penalize
+                    console.warn(`[Hydra] Model ${modelId} failed: ${errMsg}. Failing over...`);
+                    box.add(modelId); // Default penalty
+                    if (onRetry) onRetry(modelId, error);
+                } else {
+                    // If it's a prompt error (400), do NOT failover blindly, as next model will likely fail too.
+                    // BUT, sometimes 400 is 'Model not found' or 'Context length exceeded'.
+                    // Context length exceeded -> Fallback might work if next model has larger context?
+                    // For now, let's bubble up non-transient errors unless we are sure.
+                    // Ouroboros V2 Strategy says: "On Failure (429/500/404)... Auto-Fallback".
+                    throw error;
+                }
+            }
+        }
+
+        if (attemptedCount === 0) {
+            throw new AllHeadsSeveredError("All available models in this tier are currently in the Penalty Box. Please wait or manually reroute.");
+        }
+
+        throw new AllHeadsSeveredError(`Hydra Failover Exhausted. Last error: ${lastError?.message}`);
+    }
+
     public get models() {
         return {
             generateContent: async (params: { model: string, contents: string, config?: any }): Promise<LLMResponse> => {
@@ -66,13 +138,17 @@ export class UnifiedLLMClient {
                 }
 
                 if (provider === 'openai') {
-                    return this.callOpenAI(params);
+                    const res = await this.callOpenAI(params);
+                    return { ...res, modelUsed: params.model };
                 } else if (provider === 'openrouter') {
-                    return this.callOpenRouter(params);
+                    const res = await this.callOpenRouter(params);
+                    return { ...res, modelUsed: params.model };
                 } else if (provider === 'local') {
-                    return this.callLocal(params);
+                    const res = await this.callLocal(params);
+                    return { ...res, modelUsed: params.model };
                 } else {
-                    return this.callGoogle(params);
+                    const res = await this.callGoogle(params);
+                    return { ...res, modelUsed: params.model };
                 }
             }
         };

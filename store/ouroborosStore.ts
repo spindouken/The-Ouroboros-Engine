@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { LogEntry, OracleMessage, OracleContext } from '../types';
+import { DEFAULT_HYDRA_SETTINGS, MODEL_TIERS } from '../constants';
 
 interface OuroborosState {
     // App Status
@@ -93,7 +94,10 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         debugMode: false,
         model_manifestation: 'gemini-2.0-flash-exp',
         localBaseUrl: 'http://localhost:11434/v1',
-        localModelId: 'gemma:7b'
+
+        localModelId: 'gemma:7b',
+        hydraSettings: DEFAULT_HYDRA_SETTINGS,
+        customTiers: MODEL_TIERS
     },
     updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
 

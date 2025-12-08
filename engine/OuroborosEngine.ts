@@ -8,6 +8,9 @@ import { createRedFlagValidator } from '../red-flag-validator';
 import { createRateLimiter } from '../rate-limiter';
 import { db, DBProject } from '../db/ouroborosDB';
 import { useOuroborosStore } from '../store/ouroborosStore';
+import { MODEL_TIERS } from '../constants';
+import { PenaltyBoxRegistry } from './PenaltyBoxRegistry';
+import { AllHeadsSeveredError } from './UnifiedLLMClient';
 import { Node as FlowNode, Edge as FlowEdge } from 'reactflow';
 
 export class OuroborosEngine {
@@ -20,6 +23,7 @@ export class OuroborosEngine {
     private memoryManager;
     private redFlagValidator;
     private rateLimiter;
+    private penaltyBox: PenaltyBoxRegistry;
 
     // API
     private ai: UnifiedLLMClient;
@@ -32,6 +36,7 @@ export class OuroborosEngine {
         this.memoryManager = createAgentMemoryManager();
         this.redFlagValidator = createRedFlagValidator();
         this.rateLimiter = createRateLimiter({ rpm: 60, rpd: 10000, enabled: true });
+        this.penaltyBox = new PenaltyBoxRegistry();
         this.ai = new UnifiedLLMClient(
             process.env.API_KEY || "",
             process.env.OPENAI_API_KEY || "",
@@ -458,7 +463,7 @@ export class OuroborosEngine {
 
             let deptAgents;
             try {
-                deptAgents = await this.prismController.analyzeTask(goal, ai, prismModel, deptKey);
+                deptAgents = await this.prismController.analyzeTask(goal, this.getHydraAI(), prismModel, deptKey);
                 console.log(`[Engine] Prism returned ${deptAgents.length} agents for ${deptKey}`);
             } catch (err) {
                 console.error(`[Engine] Prism failed for ${deptKey}:`, err);
@@ -638,8 +643,9 @@ export class OuroborosEngine {
                     const threshold = useOuroborosStore.getState().settings.consensusThreshold || 85;
                     if (avgScore < threshold) {
                         if (Object.keys(nodesRef).length < 20) {
-                            this.addLog('warn', `Consensus weak (< ${threshold}). Ouroborus devours itself for another cycle...`);
-                            this.expandRefinementGraph(nodesRef, useOuroborosStore.getState().documentContent);
+                            this.addLog('warn', `Consensus weak (< ${threshold}). Triggering Prism Refinement...`);
+                            // We no longer blindly expand. The Tribunal node will handle the Prism trigger.
+                            // This prevents double-branching.
                             return;
                         } else {
                             this.addLog('warn', 'Consensus weak, but Cycle Limit Reached (Max Nodes). Halting.');
@@ -698,6 +704,32 @@ export class OuroborosEngine {
         };
 
         checkRunnable();
+    }
+
+    public async retryNode(nodeId: string, modelOverride?: string, updateGlobal: boolean = false) {
+        const node = await db.nodes.get(nodeId);
+        if (!node) return;
+
+        const update: Partial<Node> = {
+            status: 'pending',
+            distress: false,
+            failedModel: undefined,
+            lastHydraLog: undefined
+        };
+
+        if (modelOverride) {
+            update.data = { ...(node.data || {}), modelOverride };
+            this.penaltyBox.clear(modelOverride);
+
+            if (updateGlobal) {
+                this.addLog('system', `Hydra Protocol: Updating Session Global Model to ${modelOverride}`, nodeId);
+                await this.updateSettings({ model: modelOverride });
+            }
+        }
+
+        await this.updateNodeState(nodeId, update);
+        this.addLog('system', `Rescue Mission: Retrying ${node.label}...`, nodeId);
+        this.processGraph();
     }
 
     private apiKey: string | null = null;
@@ -763,6 +795,11 @@ export class OuroborosEngine {
             if (node.type === 'architect' && settings.model_architect) selectedModel = settings.model_architect;
             if (node.type === 'synthesizer' && settings.model_synthesizer) selectedModel = settings.model_synthesizer;
             if (node.type === 'gatekeeper' && settings.model_judge) selectedModel = settings.model_judge;
+
+            // Hydra Rescue Override
+            if (node.data?.modelOverride) {
+                selectedModel = node.data.modelOverride;
+            }
             const dependencyOutputs = await Promise.all(node.dependencies.map(async d => {
                 const depNode = await db.nodes.get(d);
                 if (!depNode) return "";
@@ -821,20 +858,32 @@ export class OuroborosEngine {
                     
                     YOUR LENS: ${instructionContext}
                     
-                    Provide specific, actionable insights. 
-                    CRITICAL: You must rate your own confidence in these insights (0-100) based on how critical they are to the project's success.
+                    Provide specific, actionable insights.
+                    CRITICAL: If proposing code, provide the COMPLETE, production-ready code. No placeholders.
+                    CRITICAL: Your output must be valid JSON.
                     
                     Return JSON: { "insight": "markdown string...", "confidence": number }`;
+
+                    const specialistConfig = {
+                        ...generationConfig,
+                        responseMimeType: "application/json"
+                    };
 
                     const resp = await this.callLLM(
                         selectedModel,
                         lastPrompt,
-                        generationConfig
+                        specialistConfig
                     );
+                    if (resp.modelUsed) selectedModel = resp.modelUsed;
                     rawResponse = resp.text || "";
                     resultData = this.extractJson(resp.text || "{}");
                     resultText = resultData?.insight || "No insights.";
                     score = resultData?.confidence || 0;
+
+                    // Normalize Score (Handle 0-1 vs 0-100)
+                    if (score > 0 && score <= 1) {
+                        score = Math.round(score * 100);
+                    }
 
                     // --- CERTAINTY FILTERING ---
                     const hedgingPatterns = [/I think/i, /maybe/i, /possibly/i, /it seems/i, /might be/i, /could be/i];
@@ -869,11 +918,8 @@ export class OuroborosEngine {
                       "summary": "markdown string (for the graph)"
                     }`;
 
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: lastPrompt,
-                        config: { responseMimeType: "application/json" }
-                    });
+                    const resp = await this.generateWithHydra(selectedModel, lastPrompt, { responseMimeType: "application/json" });
+                    if (resp.modelUsed) selectedModel = resp.modelUsed;
                     rawResponse = resp.text || "";
 
                     resultData = this.extractJson(resp.text || "{}");
@@ -924,7 +970,11 @@ ${proof}
                     Rewrite the Prima Materia to incorporate ALL valid insights. Make it seamless.
                     Return the FULL Markdown document.
                     
-                    CRITICAL: Do not summarize. Retain all technical details, constraints, and logic provided by the specialists.
+                    CRITICAL: Do not summarize. Retain all technical details.
+                    INTEGRITY PROTOCOL: Compare "Old Matter" vs "Council Decrees".
+                    - If "Old Matter" has detailed code/logic and "Decree" is generic -> KEEP OLD MATTER.
+                    - If "Decree" fixes a bug -> MERGE it specifically.
+                    - NEVER replace working implementations with placeholders.
                     
                     Structure the document with:
                     1. **Architecture Overview** (Mermaid diagrams if applicable)
@@ -934,10 +984,8 @@ ${proof}
                     
                     Avoid marketing fluff. Prioritize engineering density.`;
 
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: lastPrompt
-                    });
+                    const resp = await this.generateWithHydra(selectedModel, lastPrompt);
+                    if (resp.modelUsed) selectedModel = resp.modelUsed;
                     rawResponse = resp.text || "";
                     resultText = resp.text || useOuroborosStore.getState().documentContent;
                     useOuroborosStore.getState().setDocumentContent(resultText);
@@ -987,7 +1035,8 @@ ${proof}
                     score = votingResult.averageScore;
                     resultData = votingResult;
 
-                    if (votingResult.requiresHumanReview || score <= 70) {
+                    const threshold = useOuroborosStore.getState().settings.consensusThreshold || 85;
+                    if (votingResult.requiresHumanReview || score < threshold) {
                         // RECURSIVE DECOMPOSITION / AUTO-CORRECTION
                         if (this.prismController.shouldDecompose(nodeId)) {
 
@@ -995,7 +1044,7 @@ ${proof}
                                 // VETO: Trigger Auto-Correction
                                 this.addLog('warn', `VETO Triggered. Initiating Recursive Auto-Correction...`, nodeId);
                                 const vetoReason = votingResult.judgeOutputs.find((j: any) => j.score === 0)?.reasoning || "Unknown Veto";
-                                const correction = await this.prismController.analyzeVeto(vetoReason, useOuroborosStore.getState().documentContent, ai, selectedModel);
+                                const correction = await this.prismController.analyzeVeto(vetoReason, useOuroborosStore.getState().documentContent, this.getHydraAI(), selectedModel);
 
                                 await this.triggerCorrectionLoop(nodeId, vetoReason, correction.correctionPlan, correction.suggestedAgents);
                                 this.prismController.resetFailureCount(nodeId);
@@ -1004,11 +1053,14 @@ ${proof}
                             } else {
                                 // Standard Decomposition (Low Score)
                                 this.addLog('warn', `Verification Failed > 2 times. Triggering Recursive Decomposition...`, nodeId);
-                                const subTasks = await this.prismController.decomposeTask(nodeId, useOuroborosStore.getState().documentContent, ai, selectedModel);
+                                const subTasks = await this.prismController.decomposeTask(nodeId, useOuroborosStore.getState().documentContent, this.getHydraAI(), selectedModel);
 
                                 if (subTasks.length > 0) {
-                                    this.addLog('system', `Decomposed into ${subTasks.length} micro-tasks. Spawning new agents...`, nodeId);
-                                    this.expandPlanningTree(nodeId, subTasks, 'tasks', (node.depth || 0) + 1, 'pending', node.mode);
+                                    this.addLog('system', `Prism Decomposed into ${subTasks.length} agents. Spawning recursive squad...`, nodeId);
+
+                                    // Use the new Recursive Loop instead of basic tree expansion
+                                    await this.triggerPrismRefinementLoop(nodeId, subTasks);
+
                                     this.prismController.resetFailureCount(nodeId);
                                     executionValid = true;
                                 } else {
@@ -1043,11 +1095,8 @@ ${proof}
                             ]
                         }`;
 
-                    const resp = await ai.models.generateContent({
-                        model: selectedModel,
-                        contents: lastPrompt,
-                        config: { responseMimeType: "application/json" }
-                    });
+                    const resp = await this.generateWithHydra(selectedModel, lastPrompt, { responseMimeType: "application/json" });
+                    if (resp.modelUsed) selectedModel = resp.modelUsed;
                     rawResponse = resp.text || "";
 
                     resultData = this.extractJson(resp.text || "{}");
@@ -1080,6 +1129,7 @@ ${proof}
                         lastPrompt,
                         { responseMimeType: "application/json" }
                     );
+                    if (resp.modelUsed) selectedModel = resp.modelUsed;
                     rawResponse = resp.text || "";
 
                     resultData = this.extractJson(resp.text || "{}");
@@ -1102,13 +1152,15 @@ ${proof}
                             this.addLog('warn', retryMsg, nodeId);
                             if (retryMsg.includes("ESCALATED")) {
                                 this.addLog('warn', `Red Flags Escalated. Spawning Quality Control Agent...`, nodeId);
+                                console.log(`[Engine] ESCALATION: Spawning QC Agent for node ${nodeId}`);
                                 const fixTask = {
                                     id: `${nodeId}_qc_fix`,
                                     title: `Fix Red Flags for ${node.label}`,
                                     instruction: `The previous output failed validation:\n${validation.flags.map(f => f.message).join('\n')}\n\nFix the output to adhere to quality standards.`,
                                     minimalContext: resultText
                                 };
-                                this.expandPlanningTree(nodeId, [fixTask], 'tasks', (node.depth || 0) + 1, 'pending', node.mode);
+                                // Ensure we are passing strict 'refine' mode to ensure visibility on the graph
+                                this.expandPlanningTree(nodeId, [fixTask], 'tasks', (node.depth || 0) + 1, 'pending', 'refine');
                                 executionValid = true;
                             } else {
                                 currentTemp = validation.suggestedTemperature || currentTemp;
@@ -1192,6 +1244,18 @@ ${proof}
             this.apiSemaphore.release();
             const err = e as Error;
 
+            // HYDRA HANDLER
+            if (e instanceof AllHeadsSeveredError || err.name === 'AllHeadsSeveredError') {
+                this.addLog('error', `HYDRA: All heads severed for ${node.label}. Manual Intervention Required.`, nodeId);
+                await this.updateNodeState(nodeId, {
+                    status: 'distress',
+                    failedModel: "All Tiers Exhausted",
+                    lastHydraLog: err.message,
+                    output: `HYDRA FAILURE: ${err.message}`
+                });
+                return false;
+            }
+
             if (err.message.includes("quota") || err.message.includes("429")) {
                 const waitTimeSeconds = Math.min(3 * Math.pow(2, retryCount), 30);
                 const waitTimeMs = waitTimeSeconds * 1000;
@@ -1217,7 +1281,7 @@ ${proof}
                 const subTasks = await this.prismController.decomposeTask(
                     nodeId,
                     useOuroborosStore.getState().documentContent,
-                    this.ai!,
+                    this.getHydraAI(),
                     useOuroborosStore.getState().settings.model
                 );
 
@@ -1529,6 +1593,59 @@ ${proof}
         this.processGraph();
     }
 
+    private async triggerPrismRefinementLoop(anchorNodeId: string, subTasks: any[]) {
+        const roundId = Math.random().toString(36).substr(2, 4);
+        this.addLog('system', `Prism Refinement Loop Initiated (Round ${roundId})...`, anchorNodeId);
+
+        const newNodes: Record<string, Node> = {};
+        const newEdges: { source: string; target: string }[] = [];
+        const specialistIds: string[] = [];
+
+        // 1. Spawn Specialists from Prism Tasks
+        subTasks.forEach((task, idx) => {
+            const specId = `prism_spec_${idx}_${roundId}`;
+            // Map MicroTask properties: minimalContext -> title/label
+            const title = task.minimalContext || task.title || `Specialist ${idx + 1}`;
+
+            newNodes[specId] = {
+                id: specId, type: 'specialist',
+                label: title,
+                persona: `Specialist Agent (${title})`,
+                instruction: task.instruction || task.description || "Refine the specification.",
+                dependencies: [anchorNodeId],
+                status: 'pending', output: null, depth: (newNodes[anchorNodeId]?.depth || 0) + 1,
+                mode: 'refine'
+            };
+            newEdges.push({ source: anchorNodeId, target: specId });
+            specialistIds.push(specId);
+        });
+
+        // 2. Spawn Alchemist
+        const alchemistId = `alchemist_${roundId}`;
+        newNodes[alchemistId] = {
+            id: alchemistId, type: 'synthesizer', label: `Alchemist v${roundId}`,
+            persona: 'Grand Architect',
+            instruction: 'Synthesize the output from the specialists into a cohesive refined solution.',
+            dependencies: specialistIds, status: 'pending', output: null, depth: 0,
+            mode: 'refine'
+        };
+        specialistIds.forEach(id => newEdges.push({ source: id, target: alchemistId }));
+
+        // 3. Spawn Tribunal
+        const tribunalId = `tribunal_${roundId}`;
+        newNodes[tribunalId] = {
+            id: tribunalId, type: 'gatekeeper', label: 'The Tribunal',
+            persona: 'Supreme Court of Verification',
+            instruction: 'Verify the refined solution. Vote PASS or FAIL.',
+            dependencies: [alchemistId], status: 'pending', output: null, depth: 0,
+            mode: 'refine'
+        };
+        newEdges.push({ source: alchemistId, target: tribunalId });
+
+        this.updateGraph(newNodes, newEdges);
+        this.processGraph();
+    }
+
     // --- MANIFESTATION & EXPORT ---
 
     public async generateManifestation() {
@@ -1652,6 +1769,7 @@ ${planMarkdown}
             a.download = `project_plan_${new Date().toISOString().split('T')[0]}.json`;
             a.click();
         }
+        // End of downloadProject
     }
 
     public async generateDebugReport(): Promise<string> {
@@ -1833,14 +1951,88 @@ ${node.debugData.rawResponse || 'N/A'}
         }
     }
 
+    private getHydraAI() {
+        return {
+            models: {
+                generateContent: async (params: { model: string, contents: string, config?: any }) => {
+                    return this.callLLM(params.model, params.contents, params.config);
+                }
+            }
+        };
+    }
+
     private async callLLM(model: string, prompt: string, config?: any): Promise<LLMResponse> {
-        const resp = await this.ai.models.generateContent({
-            model: model,
-            contents: prompt,
-            config: config
-        });
+        return this.generateWithHydra(model, prompt, config);
+    }
+
+    private getFailoverList(primaryModelId: string): string[] {
+        const settings = useOuroborosStore.getState().settings;
+        const customTiers = settings.customTiers || MODEL_TIERS;
+
+        const S = customTiers.S_TIER || [];
+        const A = customTiers.A_TIER || [];
+        const B = customTiers.B_TIER || [];
+
+        let failoverSequence: string[] = [];
+
+        if (S.includes(primaryModelId)) {
+            // If in S-Tier, cascade S -> A -> B
+            failoverSequence = [...S, ...A, ...B];
+        } else if (A.includes(primaryModelId)) {
+            // If in A-Tier, cascade A -> B
+            failoverSequence = [...A, ...B];
+        } else if (B.includes(primaryModelId)) {
+            // If in B-Tier, stay in B
+            failoverSequence = [...B];
+        } else {
+            // If not in any tier, do not force other models.
+            // Return only primary to respect user intent.
+            return [primaryModelId];
+        }
+
+        // Ensure Primary is first, then unique others
+        const unique = Array.from(new Set(failoverSequence));
+        const others = unique.filter(m => m !== primaryModelId);
+        return [primaryModelId, ...others];
+    }
+
+    private async generateWithHydra(primaryModelId: string, prompt: string, config?: any): Promise<LLMResponse> {
+        const settings = useOuroborosStore.getState().settings;
+
+        // Check if Hydra is enabled
+        if (!settings.hydraSettings?.autoFailover) {
+            const resp = await this.ai.models.generateContent({
+                model: primaryModelId,
+                contents: prompt,
+                config: config
+            });
+            if (resp.usage) useOuroborosStore.getState().addUsage(primaryModelId, resp.usage);
+            return resp;
+        }
+
+        const failoverList = this.getFailoverList(primaryModelId);
+
+        // Allow Strategy sorting? (Cost vs Speed) - For now, respect tier order but put primary first.
+        // If 'cost' strategy, we might want to sort the REST of the list by cost? 
+        // For simplicity in Phase 1, we trust the tier order (which defaults to quality/cost balance usually).
+
+        const resp = await this.ai.executeWithHydra(
+            failoverList,
+            prompt,
+            config,
+            this.penaltyBox,
+            (model, err) => {
+                this.addLog('warn', `Based on Hydra Protocol, failing over from ${model}: ${err.message}`);
+            }
+        );
+
+        if (resp.modelUsed && resp.modelUsed !== primaryModelId) {
+            this.addLog('warn', `Hydra Protocol: Failover Successful. Used verified model: ${resp.modelUsed}`);
+        }
+
         if (resp.usage) {
-            useOuroborosStore.getState().addUsage(model, resp.usage);
+            const usageModel = resp.modelUsed || primaryModelId;
+            useOuroborosStore.getState().addUsage(usageModel, resp.usage);
         }
         return resp;
     }

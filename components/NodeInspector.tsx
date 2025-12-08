@@ -3,6 +3,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import { OuroborosEngine } from '../engine/OuroborosEngine';
 import { AppSettings, LogEntry, Node } from '../types';
+import { MODELS } from '../constants';
+import { AlertTriangle } from 'lucide-react';
 
 interface NodeInspectorProps {
     nodeId: string;
@@ -19,6 +21,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
     };
 
     const [activeTab, setActiveTab] = useState<'output' | 'prompt' | 'identity' | 'mdap' | 'logs' | 'artifacts' | 'tribunal'>('output');
+
+    const [rescueModel, setRescueModel] = useState<string>('');
+    const [isGlobalRescue, setIsGlobalRescue] = useState(false);
 
     if (!node) return null;
 
@@ -97,6 +102,53 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
                     )}
                 </div>
             </div>
+
+            {/* HYDRA DISTRESS SIGNAL */}
+            {node.status === 'distress' && (
+                <div className="mx-4 mt-2 p-3 bg-amber-900/30 border border-amber-500/50 rounded animate-pulse shadow-[0_0_15px_rgba(245,158,11,0.3)]">
+                    <h3 className="text-amber-500 font-bold flex items-center gap-2 mb-2 text-xs uppercase tracking-wider">
+                        <AlertTriangle className="w-4 h-4" /> HYDRA: ALL HEADS SEVERED
+                    </h3>
+                    <p className="text-[11px] text-amber-200/80 mb-3 font-mono leading-relaxed break-all">
+                        The Hydra Protocol exhausted all available models in the tier.
+                        Requires manual intervention to proceed.
+                        <br />
+                        <span className="text-red-400 font-bold mt-1 block break-words">Error: {node.lastHydraLog || "Unknown 429 Error"}</span>
+                    </p>
+
+                    <div className="flex flex-col gap-2">
+                        <select
+                            className="w-full bg-black/50 border border-amber-900 rounded p-1.5 text-xs text-amber-500 font-bold focus:border-amber-500 focus:outline-none"
+                            onChange={(e) => setRescueModel(e.target.value)}
+                            value={rescueModel}
+                        >
+                            <option value="">Select Rescue Model...</option>
+                            {MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        </select>
+
+                        <label className="flex items-center gap-2 text-[10px] text-amber-500 cursor-pointer hover:text-amber-400 transition-colors">
+                            <input
+                                type="checkbox"
+                                checked={isGlobalRescue}
+                                onChange={(e) => setIsGlobalRescue(e.target.checked)}
+                                className="accent-amber-500 bg-black border-amber-900 rounded focus:ring-amber-500"
+                            />
+                            Update Global Default for Session (Prevents Recurring Failures)
+                        </label>
+
+                        <button
+                            onClick={() => {
+                                const updateGlobal = isGlobalRescue && !!rescueModel;
+                                OuroborosEngine.getInstance().retryNode(node.id, rescueModel || undefined, updateGlobal);
+                                onClose();
+                            }}
+                            className="w-full px-3 py-2 bg-amber-600 hover:bg-amber-500 text-black font-bold text-xs rounded shadow-lg hover:shadow-amber-500/20 transition-all uppercase tracking-wider"
+                        >
+                            DEPLOY RESCUE
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto">

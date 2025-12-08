@@ -20,7 +20,15 @@ export type NodeStatus =
   | 'verifying'
   | 'decomposing'
   | 'voting'
-  | 'planned';
+  | 'evaluating'
+  | 'planning'
+  | 'complete'
+  | 'error'
+  | 'verifying'
+  | 'decomposing'
+  | 'voting'
+  | 'planned'
+  | 'distress'; // Hydra Protocol Status
 
 export type NodeType =
   | 'specialist'
@@ -63,6 +71,11 @@ export interface Node {
   streaming?: boolean;
   memory?: AgentMemory[];
   performanceMetrics?: NodePerformance;
+
+  // Hydra Failover Protocol
+  distress?: boolean;
+  failedModel?: string; // The model that caused the distress
+  lastHydraLog?: string;
 
   // Verified Synthesis Artifacts
   artifacts?: {
@@ -306,6 +319,26 @@ export interface AppSettings {
 
   // New settings
   consensusThreshold?: number; // Tribunal passing score (0-100)
+
+  // Hydra Protocol Settings
+  hydraSettings: HydraSettings;
+  customTiers: Record<ModelTier, string[]>;
+}
+
+// --- HYDRA FAILOVER PROTOCOL ---
+
+export type ModelTier = 'S_TIER' | 'A_TIER' | 'B_TIER';
+
+export interface HydraSettings {
+  autoFailover: boolean; // default: true
+  maxRetries: number;     // default: 2
+  fallbackStrategy: 'cost' | 'speed'; // default: 'cost' OR 'performance' (Task says 'speed'/'performance', let's stick to 'speed' as mapped to 'Performance First' broadly or align with code)
+}
+
+export interface PenaltyBoxEntry {
+  modelId: string;
+  timestamp: number;
+  duration: number; // in ms
 }
 
 // --- THE ORACLE (Requirements 3.0) ---

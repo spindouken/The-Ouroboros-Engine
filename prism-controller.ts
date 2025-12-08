@@ -95,10 +95,20 @@ export class PrismController {
                     console.log(`[Prism] Analysis complete for ${department || 'General'} (Attempt ${attempts})`);
 
                     const text = response.text || "[]";
+                    // Hybrid Extraction: Prioritize Markdown, fallback to Brackets
                     const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
-                    const jsonString = jsonMatch ? jsonMatch[1] : text;
+                    let jsonString = "[]";
 
-                    const json = JSON.parse(jsonString.trim());
+                    if (jsonMatch) {
+                        jsonString = jsonMatch[1];
+                    } else {
+                        const start = text.indexOf('[');
+                        const end = text.lastIndexOf(']');
+                        if (start !== -1 && end !== -1 && end > start) {
+                            jsonString = text.substring(start, end + 1);
+                        }
+                    }
+                    const json = JSON.parse(jsonString);
 
                     if (Array.isArray(json) && json.length > 0) {
                         // CAP the number of agents to max 7 to prevent explosion, min 1
@@ -227,7 +237,20 @@ export class PrismController {
             });
 
             const text = response.text || "{}";
-            const json = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+            // Hybrid Extraction: Prioritize Markdown, fallback to Braces
+            const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
+            let jsonString = "{}";
+
+            if (jsonMatch) {
+                jsonString = jsonMatch[1];
+            } else {
+                const start = text.indexOf('{');
+                const end = text.lastIndexOf('}');
+                if (start !== -1 && end !== -1 && end > start) {
+                    jsonString = text.substring(start, end + 1);
+                }
+            }
+            const json = JSON.parse(jsonString);
 
             return {
                 correctionPlan: json.correctionPlan || "Fix the errors identified by the VETO.",
@@ -279,7 +302,20 @@ export class PrismController {
             });
 
             const text = response.text || "{}";
-            const json = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+            // Hybrid Extraction: Prioritize Markdown, fallback to Braces
+            const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
+            let jsonString = "{}";
+
+            if (jsonMatch) {
+                jsonString = jsonMatch[1];
+            } else {
+                const start = text.indexOf('{');
+                const end = text.lastIndexOf('}');
+                if (start !== -1 && end !== -1 && end > start) {
+                    jsonString = text.substring(start, end + 1);
+                }
+            }
+            const json = JSON.parse(jsonString);
 
             if (!json.id || !json.title) return null;
 

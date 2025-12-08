@@ -48,7 +48,33 @@ export class MicroAgentDecomposerImpl implements MicroAgentDecomposer {
       });
 
       const text = resp.text || "[]";
-      const json = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+
+      // Hybrid Extraction: Prioritize Markdown, fallback to Brackets
+      const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
+      let jsonString = "[]";
+
+      if (jsonMatch) {
+        jsonString = jsonMatch[1];
+      } else {
+        const start = text.indexOf('[');
+        const end = text.lastIndexOf(']');
+        if (start !== -1 && end !== -1 && end > start) {
+          jsonString = text.substring(start, end + 1);
+        }
+      }
+
+      let json;
+      try {
+        json = JSON.parse(jsonString);
+      } catch (parseError) {
+        console.warn("[Decomposer] JSON Parse Failed. Raw:", text);
+        // Attempt to cleanup common trailing comma issues or markdown
+        try {
+          json = JSON.parse(jsonString.replace(/,\s*]/, "]"));
+        } catch (e2) {
+          return [];
+        }
+      }
 
       if (!Array.isArray(json)) {
         console.warn("Decomposition returned invalid format", json);

@@ -8,6 +8,7 @@ import { MODELS } from '../constants';
 import { useSoundEffects } from '../hooks/useSoundEffects';
 import { useOuroborosStore } from '../store/ouroborosStore';
 import { SessionCodex } from './SessionCodex';
+import { HydraTierEditor } from './settings/HydraTierEditor';
 
 interface SettingsPanelProps {
     onClose: () => void;
@@ -21,6 +22,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const [showLimitsInfo, setShowLimitsInfo] = useState(false);
     const [selectedProvider, setSelectedProvider] = useState<'all' | 'google' | 'openai'>('all');
     const [activeTab, setActiveTab] = useState<'config' | 'codex'>('config');
+    const [showHydraEditor, setShowHydraEditor] = useState(false);
     const engine = OuroborosEngine.getInstance();
     const { playClick, playHover } = useSoundEffects();
 
@@ -54,7 +56,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
         reader.readAsText(file);
     };
 
-    return (
+    const mainContent = (
         <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8">
             <div className="bg-[#0a0c0a] border border-emerald-900/80 rounded-lg w-full max-w-lg shadow-2xl p-6 relative max-h-full overflow-y-auto custom-scrollbar">
                 <button
@@ -211,7 +213,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                     {/* Show current value if it's not in the list (e.g. legacy/stale setting) */}
                                                     {settings[key as keyof AppSettings] && !MODELS.find(m => m.id === settings[key as keyof AppSettings]) && (
                                                         <option value={settings[key as keyof AppSettings] as string}>
-                                                            {settings[key as keyof AppSettings]} (Legacy/Unknown)
+                                                            {settings[key as keyof AppSettings] as string} (Legacy/Unknown)
                                                         </option>
                                                     )}
                                                     {MODELS.filter(m => selectedProvider === 'all' || m.provider === selectedProvider).map(m => (
@@ -242,7 +244,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                     {/* Show current value if it's not in the list (e.g. legacy/stale setting) */}
                                                     {settings[key as keyof AppSettings] && !MODELS.find(m => m.id === settings[key as keyof AppSettings]) && (
                                                         <option value={settings[key as keyof AppSettings] as string}>
-                                                            {settings[key as keyof AppSettings]} (Legacy/Unknown)
+                                                            {settings[key as keyof AppSettings] as string} (Legacy/Unknown)
                                                         </option>
                                                     )}
                                                     {MODELS.filter(m => selectedProvider === 'all' || m.provider === selectedProvider).map(m => (
@@ -251,6 +253,44 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                 </select>
                                             </div>
                                         ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* HYDRA PROTOCOL */}
+                            <div className="space-y-3 pt-4 border-t border-emerald-900/30">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-bold text-emerald-700 flex items-center gap-2">
+                                        <Shield className="w-3 h-3 text-amber-500" /> HYDRA FAILOVER PROTOCOL
+                                    </label>
+                                    <button
+                                        onClick={() => { playClick(); setShowHydraEditor(true); }}
+                                        className="text-[10px] text-amber-500 hover:text-amber-400 font-bold border border-amber-900/50 px-2 py-1 rounded bg-amber-900/10"
+                                    >
+                                        EDIT FALLBACK MODELS
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
+                                        <span className="text-xs text-emerald-400">Auto-Failover</span>
+                                        <input
+                                            type="checkbox"
+                                            checked={settings.hydraSettings?.autoFailover ?? true}
+                                            onChange={(e) => onUpdate({ hydraSettings: { ...(settings.hydraSettings || { maxRetries: 2, fallbackStrategy: 'cost' } as any), autoFailover: e.target.checked } })}
+                                            className="accent-amber-500"
+                                        />
+                                    </div>
+                                    <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
+                                        <span className="text-xs text-emerald-400">Strategy</span>
+                                        <select
+                                            value={settings.hydraSettings?.fallbackStrategy ?? 'cost'}
+                                            onChange={(e) => onUpdate({ hydraSettings: { ...(settings.hydraSettings || { maxRetries: 2, autoFailover: true } as any), fallbackStrategy: e.target.value as any } })}
+                                            className="bg-black text-amber-500 text-[10px] border-none focus:ring-0 text-right focus:outline-none"
+                                        >
+                                            <option value="cost">Cost First</option>
+                                            <option value="speed">Speed First</option>
+                                        </select>
                                     </div>
                                 </div>
                             </div>
@@ -638,4 +678,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
             </div>
         </div>
     );
+
+    if (showHydraEditor) {
+        return <HydraTierEditor onClose={() => setShowHydraEditor(false)} />;
+    }
+
+    return mainContent;
 };
