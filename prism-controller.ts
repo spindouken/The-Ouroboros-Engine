@@ -135,7 +135,7 @@ export class PrismController {
             return []; // Should be unreachable given throw above
         } catch (error) {
             console.error("Prism analysis failed completely. Using Fallback Squad.", error);
-            // Fallback to DEFAULT SQUAD (3 Agents) instead of just 1
+            // Fallback to DEFAULT SQUAD(3 Agents) instead of just 1
             const dept = department || 'General';
             return [
                 {

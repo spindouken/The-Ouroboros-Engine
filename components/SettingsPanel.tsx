@@ -20,7 +20,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
         OuroborosEngine.getInstance().updateSettings(newSettings);
     };
     const [showLimitsInfo, setShowLimitsInfo] = useState(false);
-    const [selectedProvider, setSelectedProvider] = useState<'all' | 'google' | 'openai'>('all');
+    const [selectedProvider, setSelectedProvider] = useState<'all' | 'google' | 'openai' | 'groq'>('all');
     const [activeTab, setActiveTab] = useState<'config' | 'codex'>('config');
     const [showHydraEditor, setShowHydraEditor] = useState(false);
     const engine = OuroborosEngine.getInstance();
@@ -92,7 +92,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         <Zap className="w-3 h-3" /> SELECT MODEL
                                     </label>
                                     <div className="flex gap-1">
-                                        {['all', 'google', 'openai', 'openrouter'].map(p => (
+                                        {['all', 'google', 'openai', 'openrouter', 'groq'].map(p => (
                                             <button
                                                 key={p}
                                                 onClick={() => setSelectedProvider(p as any)}
@@ -595,6 +595,24 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         engine.setOpenRouterKey(val);
                                     }}
                                     placeholder="sk-or-..."
+                                    className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                />
+                            </div>
+
+                            <div className="flex flex-col gap-2 p-2 bg-emerald-900/10 rounded border border-emerald-900/30 mt-2">
+                                <div className="flex flex-col">
+                                    <span className="text-xs text-emerald-400 font-bold">Groq API Key</span>
+                                    <span className="text-[10px] text-emerald-600">Required for Llama 3 (Groq), Kimi, Qwen.</span>
+                                </div>
+                                <input
+                                    type="password"
+                                    value={settings.groqApiKey || ''}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        onUpdate({ groqApiKey: val });
+                                        engine.updateKeys(undefined, undefined, undefined, undefined, undefined, val);
+                                    }}
+                                    placeholder="gsk_..."
                                     className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
                                 />
                             </div>

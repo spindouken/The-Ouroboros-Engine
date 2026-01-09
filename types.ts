@@ -286,6 +286,7 @@ export interface AppSettings {
   apiKey?: string; // Google API Key
   openaiApiKey?: string; // OpenAI API Key
   openRouterApiKey?: string; // OpenRouter API Key
+  groqApiKey?: string; // Groq API Key
 
   // New settings for MDAP features
   autoSaveInterval: number;

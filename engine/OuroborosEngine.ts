@@ -40,7 +40,10 @@ export class OuroborosEngine {
         this.ai = new UnifiedLLMClient(
             process.env.API_KEY || "",
             process.env.OPENAI_API_KEY || "",
-            process.env.OPENROUTER_API_KEY || ""
+            process.env.OPENROUTER_API_KEY || "",
+            undefined, // LocalBaseUrl default
+            undefined, // LocalModelId default
+            process.env.GROQ_API_KEY || "" // Groq API Key
         );
         this.apiSemaphore.max = useOuroborosStore.getState().settings.concurrency;
     }
@@ -56,8 +59,8 @@ export class OuroborosEngine {
         this.ai.updateKeys(apiKey);
     }
 
-    public updateKeys(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string) {
-        this.ai.updateKeys(googleKey, openaiKey, openRouterKey, localBaseUrl, localModelId);
+    public updateKeys(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string, groqKey?: string) {
+        this.ai.updateKeys(googleKey, openaiKey, openRouterKey, localBaseUrl, localModelId, groqKey);
     }
 
     public async updateSettings(newSettings: Partial<AppSettings>) {
@@ -235,7 +238,8 @@ export class OuroborosEngine {
                 settings.openaiApiKey,
                 settings.openRouterApiKey,
                 settings.localBaseUrl,
-                settings.localModelId
+                settings.localModelId,
+                settings.groqApiKey
             );
         }
 
@@ -427,7 +431,8 @@ export class OuroborosEngine {
         const googleKey = this.apiKey || process.env.API_KEY || "";
         const openaiKey = this.openaiApiKey || process.env.OPENAI_API_KEY || "";
         const openRouterKey = settings.openRouterApiKey || process.env.OPENROUTER_API_KEY || "";
-        this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined);
+        const groqKey = settings.groqApiKey || process.env.GROQ_API_KEY || "";
+        this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined, undefined, undefined, groqKey || undefined);
 
         const ai = this.ai;
         // 1. Spawn The Squad (Dynamic via Prism)
@@ -484,7 +489,7 @@ export class OuroborosEngine {
                 nodes[specId] = {
                     id: specId, type: 'specialist', label: agent.role,
                     persona: agent.persona, department: deptKey,
-                    instruction: "Analyze the spec. You are a DISSENTER. Do not agree with the status quo. Find flaws, edge cases, and alternative approaches. If you agree, you fail.",
+                    instruction: "Analyze the spec from the perspective of your persona. Identify specific risks, opportunities, and implementation details relevant to your domain. Be thorough, specific, and technically rigorous.",
                     dependencies: [],
                     status: 'pending', output: null, depth: 2,
                     data: { temperature: agent.temperature },
@@ -784,7 +789,8 @@ export class OuroborosEngine {
             const googleKey = this.apiKey || process.env.API_KEY || "";
             const openaiKey = this.openaiApiKey || process.env.OPENAI_API_KEY || "";
             const openRouterKey = settings.openRouterApiKey || process.env.OPENROUTER_API_KEY || "";
-            this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined, settings.localBaseUrl, settings.localModelId);
+            const groqKey = settings.groqApiKey || process.env.GROQ_API_KEY || "";
+            this.ai.updateKeys(googleKey || undefined, openaiKey || undefined, openRouterKey || undefined, settings.localBaseUrl, settings.localModelId, groqKey || undefined);
 
             const ai = this.ai;
             let selectedModel = settings.model;

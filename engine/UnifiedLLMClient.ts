@@ -22,11 +22,13 @@ export interface LLMResponse {
 export class UnifiedLLMClient {
     private googleClient: GoogleGenAI | null = null;
     private openaiApiKey: string | null = null;
+
     private openRouterApiKey: string | null = null;
+    private groqApiKey: string | null = null;
     private localBaseUrl: string = 'http://localhost:11434/v1';
     private localModelId: string = 'gemma:7b';
 
-    constructor(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string) {
+    constructor(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string, groqKey?: string) {
         if (googleKey) {
             this.googleClient = new GoogleGenAI({ apiKey: googleKey });
         }
@@ -34,9 +36,10 @@ export class UnifiedLLMClient {
         this.openRouterApiKey = openRouterKey || null;
         if (localBaseUrl) this.localBaseUrl = localBaseUrl;
         if (localModelId) this.localModelId = localModelId;
+        if (groqKey) this.groqApiKey = groqKey;
     }
 
-    public updateKeys(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string) {
+    public updateKeys(googleKey?: string, openaiKey?: string, openRouterKey?: string, localBaseUrl?: string, localModelId?: string, groqKey?: string) {
         if (googleKey) {
             this.googleClient = new GoogleGenAI({ apiKey: googleKey });
         }
@@ -51,6 +54,9 @@ export class UnifiedLLMClient {
         }
         if (localModelId !== undefined) {
             this.localModelId = localModelId;
+        }
+        if (groqKey !== undefined) {
+            this.groqApiKey = groqKey;
         }
     }
 
@@ -131,6 +137,11 @@ export class UnifiedLLMClient {
                         provider = 'openai';
                     } else if (params.model === 'local-custom') {
                         provider = 'local';
+                    } else if (params.model.includes('llama') || params.model.includes('mixtral') || params.model.includes('gemma') && !params.model.includes(':free')) {
+                        // Heuristic for Groq if not caught by constants (imperfect but better than Google fallback)
+                        // But we should rely on explicit constants first. 
+                        // Check for groq prefix
+                        provider = 'groq';
                     } else {
                         provider = 'google'; // Default fallback
                     }
@@ -145,6 +156,9 @@ export class UnifiedLLMClient {
                     return { ...res, modelUsed: params.model };
                 } else if (provider === 'local') {
                     const res = await this.callLocal(params);
+                    return { ...res, modelUsed: params.model };
+                } else if (provider === 'groq') {
+                    const res = await this.callGroq(params);
                     return { ...res, modelUsed: params.model };
                 } else {
                     const res = await this.callGoogle(params);
@@ -313,6 +327,50 @@ export class UnifiedLLMClient {
         } catch (error: any) {
             console.error("OpenAI API Error:", error);
             throw new Error(`OpenAI API Error: ${error.message || error}`);
+        }
+    }
+
+    private async callGroq(params: { model: string, contents: string, config?: any }): Promise<LLMResponse> {
+        if (!this.groqApiKey) {
+            throw new Error("Groq API Key not set.");
+        }
+
+        try {
+            const isJson = params.config?.responseMimeType === "application/json";
+
+            const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${this.groqApiKey}`
+                },
+                body: JSON.stringify({
+                    model: params.model,
+                    messages: [{ role: "user", content: params.contents }],
+                    temperature: params.config?.temperature ?? 0.7,
+                    response_format: isJson ? { type: "json_object" } : undefined
+                })
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Groq API Error (${response.status}): ${errText}`);
+            }
+
+            const data = await response.json();
+            const content = data.choices?.[0]?.message?.content || "";
+
+            const usage = data.usage ? {
+                promptTokens: data.usage.prompt_tokens || 0,
+                completionTokens: data.usage.completion_tokens || 0,
+                totalTokens: data.usage.total_tokens || 0
+            } : undefined;
+
+            return { text: content, usage };
+
+        } catch (error: any) {
+            console.error("Groq API Error:", error);
+            throw new Error(`Groq API Error: ${error.message || error}`);
         }
     }
 }

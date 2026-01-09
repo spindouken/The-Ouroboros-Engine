@@ -97,16 +97,51 @@ export const MODELS = [
     { id: 'google/gemma-3-12b-it:free', label: 'Gemma 3 12B IT', desc: 'Google (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
     { id: 'google/gemma-3-4b-it:free', label: 'Gemma 3 4B IT', desc: 'Google (Free)', rpm: 20, rpd: 50, provider: 'openrouter' },
 
+    // Groq Models
+    // A-Tier (Formerly S)
+    { id: 'meta-llama/llama-4-maverick-17b-128e-instruct', label: 'Llama 4 Maverick 17B', desc: 'A-Tier Groq', rpm: 30, rpd: 1000, provider: 'groq' },
+    { id: 'moonshotai/kimi-k2-instruct', label: 'Kimi k2', desc: 'A-Tier Groq', rpm: 60, rpd: 1000, provider: 'groq' },
+    { id: 'moonshotai/kimi-k2-instruct-0905', label: 'Kimi k2 (0905)', desc: 'A-Tier Groq', rpm: 60, rpd: 1000, provider: 'groq' },
+    { id: 'qwen/qwen3-32b', label: 'Qwen 3 32B', desc: 'A-Tier Groq', rpm: 60, rpd: 1000, provider: 'groq' },
+
+    // B-Tier (Formerly A)
+    { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B', desc: 'B-Tier Groq', rpm: 30, rpd: 1000, provider: 'groq' },
+    { id: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout 17B', desc: 'B-Tier Groq', rpm: 30, rpd: 1000, provider: 'groq' },
+    { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)', desc: 'B-Tier Groq', rpm: 30, rpd: 1000, provider: 'groq' },
+
+    // B-Tier
+    { id: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B', desc: 'B-Tier Groq', rpm: 30, rpd: 14400, provider: 'groq' },
+    { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B (Groq)', desc: 'B-Tier Groq', rpm: 30, rpd: 1000, provider: 'groq' },
+    { id: 'allam-2-7b', label: 'Allam 2 7B', desc: 'B-Tier Groq', rpm: 30, rpd: 7000, provider: 'groq' },
+    { id: 'groq/compound-mini', label: 'Groq Compound Mini', desc: 'B-Tier Groq', rpm: 30, rpd: 250, provider: 'groq' },
+    { id: 'groq/compound', label: 'Groq Compound', desc: 'B-Tier Groq', rpm: 30, rpd: 250, provider: 'groq' },
+
     // Local / Custom
     { id: 'local-custom', label: 'Local / Custom (Ollama)', desc: 'Runs on your machine via Ollama', rpm: 9999, rpd: 9999, provider: 'local' },
 ];
 
 export const MODEL_TIERS = {
-    'S_TIER': ['gemini-2.5-pro', 'gpt-4o', 'gpt-5.1', 'o1', 'claude-3-5-sonnet'],
-    'A_TIER': ['gemini-2.5-flash', 'gpt-4o-mini', 'gpt-5-mini', 'claude-3-haiku'],
+    'S_TIER': [
+        'gemini-2.5-pro', 'gpt-4o', 'gpt-5.1', 'o1', 'claude-3-5-sonnet'
+    ],
+    'A_TIER': [
+        'gemini-2.5-flash', 'gpt-4o-mini', 'gpt-5-mini', 'claude-3-haiku',
+        'meta-llama/llama-4-maverick-17b-128e-instruct',
+        'moonshotai/kimi-k2-instruct',
+        'moonshotai/kimi-k2-instruct-0905',
+        'qwen/qwen3-32b'
+    ],
     'B_TIER': [
         'gemini-2.5-flash-lite',
         'gemma-3-12b',
+        'llama-3.3-70b-versatile',
+        'meta-llama/llama-4-scout-17b-16e-instruct',
+        'openai/gpt-oss-120b',
+        'llama-3.1-8b-instant',
+        'openai/gpt-oss-20b',
+        'allam-2-7b',
+        'groq/compound-mini',
+        'groq/compound',
         'local-custom',
         'x-ai/grok-4.1-fast:free',
         'google/gemini-2.0-flash-exp:free',

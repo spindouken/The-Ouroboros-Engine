@@ -95,7 +95,7 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         model_manifestation: 'gemini-2.0-flash-exp',
         localBaseUrl: 'http://localhost:11434/v1',
 
-        localModelId: 'gemma:7b',
+        localModelId: 'gemma3:12b',
         hydraSettings: DEFAULT_HYDRA_SETTINGS,
         customTiers: MODEL_TIERS
     },
