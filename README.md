@@ -13,6 +13,12 @@
   <em>Creation through destruction. Perfection through recursion.</em>
 </p>
 
+**GitHub Repository:** [github.com/spindouken/The-Ouroboros-Engine](https://github.com/spindouken/The-Ouroboros-Engine)
+**Deployed Demo:** [the-ouroboros-engine.vercel.app](https://the-ouroboros-engine.vercel.app/)
+**Project Type:** Solo/Individual Project  
+**Role:** Sole Developer, Architect, and Designer  
+**Tech Stack:** TypeScript, React, Zustand, Dexie.js (IndexedDB), Vite
+
 <p align="center">
   <a href="#-core-capabilities">Capabilities</a> •
   <a href="#-architecture-overview">Architecture</a> •
