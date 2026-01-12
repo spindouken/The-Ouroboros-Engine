@@ -1,7 +1,7 @@
 # The Ouroboros Engine — Coding Project Sample
 
-**GitHub Repository:** [github.com/spindouken/The-Ouroboros-Engine](https://github.com/spindouken/The-Ouroboros-Engine)
-**Deployed Demo:** [the-ouroboros-engine.vercel.app](https://the-ouroboros-engine.vercel.app/)
+**GitHub Repository:** [github.com/spindouken/The-Ouroboros-Engine](https://github.com/spindouken/The-Ouroboros-Engine)  
+**Deployed Demo:** [the-ouroboros-engine.vercel.app](https://the-ouroboros-engine.vercel.app/)  
 **Project Type:** Solo/Individual Project  
 **Role:** Sole Developer, Architect, and Designer  
 **Tech Stack:** TypeScript, React, Zustand, Dexie.js (IndexedDB), Vite
