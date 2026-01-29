@@ -6,6 +6,8 @@ import { ControlPanel } from './components/ControlPanel';
 import { LogViewer } from './components/LogViewer';
 import { FlowCanvas } from './components/FlowCanvas';
 import { NodeInspector } from './components/NodeInspector';
+import { ResumeSessionDialog } from './components/ResumeSessionDialog';
+import { useResumeSession } from './hooks/useResumeSession';
 import { AppLayout } from './components/layout/AppLayout';
 import { useOuroborosStore } from './store/ouroborosStore';
 import { OuroborosEngine } from './engine/OuroborosEngine';
@@ -25,6 +27,15 @@ const App = () => {
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const [appMode, setAppMode] = useState<AppMode>('refine');
     const [showSettings, setShowSettings] = useState(false);
+
+    // Resume Session Hook
+    const {
+        showDialog: showResumeDialog,
+        sessionInfo,
+        resumeSession,
+        startFresh,
+        dismissDialog
+    } = useResumeSession();
 
     // Initialize Engine & Load Session
     useEffect(() => {
@@ -61,6 +72,20 @@ Directives:
             {showSettings && (
                 <SettingsPanel
                     onClose={() => setShowSettings(false)}
+                />
+            )}
+
+            {/* Resume Session Dialog */}
+            {sessionInfo && (
+                <ResumeSessionDialog
+                    isOpen={showResumeDialog}
+                    phase={sessionInfo.phase}
+                    description={sessionInfo.description}
+                    timestamp={sessionInfo.timestamp}
+                    progress={sessionInfo.progress}
+                    onResume={resumeSession}
+                    onStartFresh={startFresh}
+                    onClose={dismissDialog}
                 />
             )}
 

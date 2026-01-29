@@ -1,25 +1,18 @@
 // ============================================================================
-// OUROBOROS EVOLUTION - ENHANCED TYPE SYSTEM
+// OUROBOROS V2.99 - ENHANCED TYPE SYSTEM
 // ============================================================================
-// This file contains all type definitions for the MDAP (Massively Decomposed
-// Agentic Processes) evolution of OUROBOROS, including micro-agent decomposition,
-// red-flagging, multi-round voting, agent memory, and all advanced features.
+// This file contains all type definitions for the V2.99 "Pragmatic Brick Factory"
+// architecture, including Specialist, Reflexion Loop, Blackboard Surveyor,
+// Antagonist Mirror, and Lossless Compiler.
 // ============================================================================
 
-// --- CORE TYPES (Extended from MVP) ---
+// --- CORE TYPES (V2.99 Updates) ---
 
 export type NodeStatus =
   | 'pending'
   | 'running'
   | 'critiquing'
-  | 'synthesizing'
-  | 'evaluating'
-  | 'planning'
-  | 'complete'
-  | 'error'
-  | 'verifying'
-  | 'decomposing'
-  | 'voting'
+  | 'synthesizing'   // Alchemist (Compiler) synthesis
   | 'evaluating'
   | 'planning'
   | 'complete'
@@ -28,16 +21,25 @@ export type NodeStatus =
   | 'decomposing'
   | 'voting'
   | 'planned'
-  | 'distress'; // Hydra Protocol Status
+  | 'distress'       // Hydra Protocol Status
+  // V2.99 New Statuses
+  | 'reflexion'      // Reflexion Loop self-critique
+  | 'surveying'      // Blackboard Surveyor validation
+  | 'auditing'       // Antagonist Mirror hostile audit
+  | 'compiling'      // Lossless Compiler assembly
+  | 'patching';      // Security Patcher review
 
 export type NodeType =
   | 'specialist'
-  | 'domain_lead'
-  | 'synthesizer'
-  | 'gatekeeper'
+  | 'domain_lead'       // Deprecated in V2.99, kept for backward compat
+  | 'synthesizer'       // Now "Alchemist (Compiler)" - uses LosslessCompiler
+  | 'gatekeeper'        // Now "Tribunal (Antagonist)" - uses AntagonistMirror
   | 'architect'
   | 'tech_lead'
-  | 'estimator';
+  | 'estimator'
+  // V2.99 New Types
+  | 'security_patcher'  // Security Patcher node
+  | 'lossless_compiler'; // Explicit Lossless Compiler node
 
 export type AppMode = 'refine' | 'plan';
 
@@ -86,6 +88,8 @@ export interface Node {
 
   // Persistence Fields
   parentId?: string;
+  childrenIds?: string[]; // ReCAP: Child node IDs
+  decompositionStatus?: 'pending' | 'atomic' | 'expanded'; // ReCAP: Expansion status
   timestamp?: number;
 
   // Debug / Quality Control Data
@@ -149,7 +153,7 @@ export interface ValidationResult {
 }
 
 export interface RedFlagValidator {
-  validate(output: string, confidence: number): ValidationResult;
+  validate(output: string, confidence: number, turboMode?: boolean, disabledFlags?: RedFlagType[]): ValidationResult;
   retry(nodeId: string, temperature: number): Promise<string>;
 }
 
@@ -288,17 +292,18 @@ export interface AppSettings {
   openRouterApiKey?: string; // OpenRouter API Key
   groqApiKey?: string; // Groq API Key
 
-  // New settings for MDAP features
+  // V2.99 Settings (Factory protocol)
   autoSaveInterval: number;
-  enableRedFlagging: boolean;
-  enableMultiRoundVoting: boolean;
+  enableGoldenSeeds?: boolean; // Controls whether to load usage-based templates
+  enableRedFlagging: boolean;           // SAFETY IS NOT OPTIONAL - hardcoded true
+  enableAntagonistProtocol: boolean;    // V2.99: Renamed from enableMultiRoundVoting - uses AntagonistMirror
+  enableMultiRoundVoting?: boolean;     // @deprecated - use enableAntagonistProtocol (kept for backward compat)
   enableStreaming: boolean;
   enableWebWorkers: boolean;
-  enableAgentMemory: boolean;
+  enableAgentMemory: boolean;           // LEARNING IS NOT OPTIONAL - hardcoded true
   enableSoundEffects?: boolean;
   baseFontSize?: number; // New setting for UI scaling
-  maxMicroAgentDepth?: number;
-  initialJudgeCount?: number;
+  // V2.99: Removed deprecated settings (maxMicroAgentDepth, initialJudgeCount)
   budgetLimit?: number;
   gitIntegration: boolean;
   redTeamMode: boolean;
@@ -307,16 +312,25 @@ export interface AppSettings {
   // Tiered Model Settings
   model_specialist?: string;
   model_lead?: string;
-  model_synthesizer?: string;
-  model_judge?: string;
+  model_synthesizer?: string;    // Alchemist (Compiler)
+  model_judge?: string;          // Tribunal (Antagonist) - @deprecated, use model_antagonist
   model_architect?: string;
   model_manifestation?: string;
   model_prism?: string;
   model_oracle?: string;
+  // V2.99 New Model Roles
+  model_antagonist?: string;     // High-reasoning model for hostile audit (Tribunal)
+  model_reflexion?: string;      // Fast/cheap model for self-critique
+  model_compiler?: string;       // Model for Lossless Compiler (if LLM formatting enabled)
+  model_security?: string;       // Model for Security Patcher
+  model_genesis?: string;        // Model for Genesis Protocol
+  model_fast?: string;           // Generic model for low-latency tasks
+  model_project_insight?: string; // V2.99: Model for Project Insight (Synthesizer)
 
   // Local LLM Config
   localBaseUrl?: string;
   localModelId?: string;
+  localSmallModelId?: string;
 
   // New settings
   consensusThreshold?: number; // Tribunal passing score (0-100)
@@ -324,6 +338,28 @@ export interface AppSettings {
   // Hydra Protocol Settings
   hydraSettings: HydraSettings;
   customTiers: Record<ModelTier, string[]>;
+
+  // V2.99 JSON Retry Settings
+  enableJsonRepair?: boolean;
+
+  jsonRetryMode?: 'none' | 'all' | 'prompt';  // Default: 'prompt' (ask user)
+
+  // V2.99 Turbo Mode Settings
+  turboMode?: boolean;               // Global force enable
+  autoTurboMode?: boolean;           // Default: true (Smart enable)
+  turboComplexityThreshold?: number; // Default: 5 (Tasks < this are Turbo)
+
+  // V2.99 Prism Decomposition Settings
+  maxAtomicTasks?: number;           // Default: 20, Range: 5-50
+  maxDecompositionPasses?: number;   // Default: 3, Range: 1-10
+  enableRecursiveDecomposition?: boolean; // Default: false
+  maxCouncilSize?: number;           // Default: 5, Range: 3-15
+  allowCodeGeneration?: boolean;     // Default: false (Experimental Force)
+
+  // V2.99 Final Gaps Features
+  disabledRedFlags?: RedFlagType[];  // Array of red flags to ignore
+  enableAdaptiveRouting?: boolean;   // Dynamically switch models based on complexity
+  enablePredictiveCostScaling?: boolean; // Upgrade model/downgrade complexity on repeated failure
 }
 
 // --- HYDRA FAILOVER PROTOCOL ---
@@ -354,6 +390,18 @@ export interface OracleContext {
   originalRequest: string;
   interviewTranscript: OracleMessage[];
   fusedSpec?: any; // The JSON output from Context Fusion
+}
+
+/**
+ * Shadow-Contextualizer / "Vibes"
+ */
+export interface PotentialConstitution {
+  id: string;
+  label: string;
+  description: string;
+  preview: string; // A short snippet or "vibe" description
+  techStackHint: string[];
+  riskLevel: 'safe' | 'balanced' | 'experimental';
 }
 
 // --- LOG ENTRY ---

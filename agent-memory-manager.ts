@@ -1,58 +1,38 @@
 import { db } from './db/ouroborosDB';
-import { AgentMemory, AgentMemoryManager, MultiRoundVotingSystem } from './types';
+import { AgentMemory, AgentMemoryManager } from './types';
 
 export class AgentMemoryManagerImpl implements AgentMemoryManager {
 
-    async storeMemory(agentId: string, memory: AgentMemory, ai?: any, model?: string, votingSystem?: MultiRoundVotingSystem): Promise<void> {
-        // Voting on Storage: Verify memory integrity
+    async storeMemory(agentId: string, memory: AgentMemory, ai?: any, model?: string): Promise<void> {
+        // Verification: Verify memory integrity via simple audit
         if (ai && model) {
-            if (votingSystem) {
-                try {
-                    const result = await votingSystem.conductVoting(
-                        memory.feedback,
-                        1,
-                        ai,
-                        { default: model, cheap: "gemini-1.5-flash", advanced: "gemini-1.5-pro" },
-                        "Verify if this memory summary is coherent, relevant, and not hallucinated."
-                    );
+            try {
+                const prompt = `
+                You are a Memory Auditor.
+                Verify if this memory summary is coherent and relevant.
+                
+                MEMORY: "${memory.feedback}"
+                SCORE: ${memory.outcomeScore}
+                
+                Vote PASS if coherent, FAIL if hallucinated or irrelevant.
+                Return JSON: { "pass": boolean }
+                `;
 
-                    if (result.averageScore <= 70 || result.requiresHumanReview) {
-                        console.warn(`[Memory] Rejected memory for ${agentId} due to voting failure (Score: ${result.averageScore}).`);
-                        return;
-                    }
-                } catch (e) {
-                    console.warn("[Memory] Multi-round voting failed, falling back to simple check.", e);
+                const resp = await ai.models.generateContent({
+                    model: model,
+                    contents: prompt,
+                    config: { responseMimeType: "application/json" }
+                });
+
+                const text = resp.text || "{}";
+                const json = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+
+                if (json.pass === false) {
+                    console.warn(`[Memory] Rejected memory for ${agentId} due to verification failure.`);
+                    return;
                 }
-
-            } else {
-                try {
-                    const prompt = `
-                    You are a Memory Auditor.
-                    Verify if this memory summary is coherent and relevant.
-                    
-                    MEMORY: "${memory.feedback}"
-                    SCORE: ${memory.outcomeScore}
-                    
-                    Vote PASS if coherent, FAIL if hallucinated or irrelevant.
-                    Return JSON: { "pass": boolean }
-                    `;
-
-                    const resp = await ai.models.generateContent({
-                        model: model,
-                        contents: prompt,
-                        config: { responseMimeType: "application/json" }
-                    });
-
-                    const text = resp.text || "{}";
-                    const json = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-
-                    if (json.pass === false) {
-                        console.warn(`[Memory] Rejected memory for ${agentId} due to verification failure.`);
-                        return;
-                    }
-                } catch (e) {
-                    console.warn("[Memory] Verification failed, storing anyway.", e);
-                }
+            } catch (e) {
+                console.warn("[Memory] Verification failed, storing anyway.", e);
             }
         }
 

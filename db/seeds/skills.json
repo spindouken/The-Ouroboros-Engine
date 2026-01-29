@@ -1,0 +1,215 @@
+{
+    "_meta": {
+        "version": "V2.99",
+        "name": "Golden Seeds - The Teflon Stack",
+        "description": "Pre-validated templates ensuring Senior-level competence from Day 1",
+        "lastUpdated": "2026-01-09"
+    },
+    "skills": [
+        {
+            "id": "auth_jwt_flow",
+            "name": "JWT Authentication Flow",
+            "category": "Authentication",
+            "tags": [
+                "jwt",
+                "auth",
+                "token",
+                "session",
+                "login",
+                "security"
+            ],
+            "content": "## JWT Authentication Architecture\n\n### Flow:\n1. User submits credentials\n2. Server validates and issues access token (short-lived) + refresh token (long-lived)\n3. Client stores tokens (httpOnly cookies preferred for security)\n4. Access token attached to API requests via Authorization header\n5. Refresh token used to obtain new access token when expired\n\n### Security Considerations:\n- Never store JWT in localStorage (XSS vulnerable)\n- Use httpOnly, secure, sameSite cookies\n- Implement token rotation on refresh\n- Include 'exp', 'iat', 'sub' claims minimum\n- Sign with RS256 for distributed systems, HS256 for monoliths",
+            "source": "golden_seed",
+            "usageCount": 0
+        },
+        {
+            "id": "api_rest_design",
+            "name": "RESTful API Design Patterns",
+            "category": "API Design",
+            "tags": [
+                "api",
+                "rest",
+                "endpoints",
+                "http",
+                "crud",
+                "backend"
+            ],
+            "content": "## RESTful API Design Principles\n\n### URL Structure:\n- Resources as nouns: `/users`, `/orders`\n- Hierarchical: `/users/{id}/orders`\n- Query params for filtering: `/users?status=active`\n\n### HTTP Methods:\n- GET: Read (idempotent)\n- POST: Create\n- PUT: Full replace (idempotent)\n- PATCH: Partial update\n- DELETE: Remove (idempotent)\n\n### Response Codes:\n- 200 OK, 201 Created, 204 No Content\n- 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found\n- 500 Internal Server Error\n\n### Best Practices:\n- Version in URL: `/api/v1/`\n- Consistent error format\n- Pagination for lists\n- HATEOAS for discoverability",
+            "source": "golden_seed",
+            "usageCount": 0
+        },
+        {
+            "id": "react_component_arch",
+            "name": "React Component Architecture",
+            "category": "Frontend",
+            "tags": [
+                "react",
+                "components",
+                "frontend",
+                "ui",
+                "state",
+                "hooks"
+            ],
+            "content": "## React Component Architecture\n\n### Component Hierarchy:\n1. **Presentational Components**: Pure UI, receive props, no business logic\n2. **Container Components**: Connect to state, handle logic\n3. **Layout Components**: Handle page structure\n4. **Utility Components**: Reusable across features\n\n### State Management Strategy:\n- Local state: `useState` for component-specific\n- Shared state: Zustand/Jotai for global\n- Server state: React Query/SWR for API data\n\n### File Structure:\n```\ncomponents/\n  Button/\n    Button.tsx\n    Button.styles.ts\n    Button.test.tsx\n    index.ts\n```\n\n### Performance:\n- React.memo for expensive renders\n- useMemo/useCallback for expensive computations\n- Code splitting with React.lazy",
+            "source": "golden_seed",
+            "usageCount": 0
+        },
+        {
+            "id": "db_schema_design",
+            "name": "Database Schema Design",
+            "category": "Database",
+            "tags": [
+                "database",
+                "schema",
+                "sql",
+                "nosql",
+                "data",
+                "modeling"
+            ],
+            "content": "## Database Schema Design Principles\n\n### Normalization (SQL):\n- 1NF: Atomic values, no repeating groups\n- 2NF: All non-key attributes depend on entire primary key\n- 3NF: No transitive dependencies\n\n### When to Denormalize:\n- Read-heavy workloads\n- Complex joins impacting performance\n- Caching frequently accessed data\n\n### NoSQL Patterns:\n- Document: Embed related data, avoid joins\n- Key-Value: Simple lookups, caching\n- Graph: Relationship-heavy data\n\n### Best Practices:\n- Use UUIDs or ULIDs for distributed systems\n- Always timestamp (createdAt, updatedAt)\n- Soft deletes (deletedAt) for audit trails\n- Index frequently queried columns\n- Foreign keys for referential integrity",
+            "source": "golden_seed",
+            "usageCount": 0
+        },
+        {
+            "id": "error_handling",
+            "name": "Error Handling Strategy",
+            "category": "Architecture",
+            "tags": [
+                "error",
+                "handling",
+                "exceptions",
+                "logging",
+                "monitoring"
+            ],
+            "content": "## Error Handling Architecture\n\n### Error Types:\n1. **Operational Errors**: Expected (invalid input, network failure)\n2. **Programming Errors**: Bugs (null reference, type errors)\n\n### Strategy:\n- Operational: Handle gracefully, return meaningful messages\n- Programming: Log, alert, fail fast in development\n\n### API Error Format:\n```json\n{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"User-friendly message\",\n    \"details\": [...],\n    \"requestId\": \"uuid\"\n  }\n}\n```\n\n### Logging Levels:\n- ERROR: Application errors requiring attention\n- WARN: Unexpected but handled scenarios\n- INFO: Normal operation events\n- DEBUG: Detailed debugging information\n\n### Monitoring:\n- Structured logging (JSON)\n- Request IDs for tracing\n- Error aggregation (Sentry, LogRocket)",
+            "source": "golden_seed",
+            "usageCount": 0
+        },
+        {
+            "id": "security_checklist",
+            "name": "Web Security Checklist",
+            "category": "Security",
+            "tags": [
+                "security",
+                "xss",
+                "csrf",
+                "injection",
+                "authentication",
+                "authorization"
+            ],
+            "content": "## Web Application Security Checklist\n\n### Input Validation:\n- [ ] Validate all user input server-side\n- [ ] Sanitize before storage AND before display\n- [ ] Use parameterized queries (prevent SQL injection)\n- [ ] Validate file uploads (type, size, content)\n\n### Authentication:\n- [ ] Strong password policy (12+ chars, complexity)\n- [ ] Rate limiting on login attempts\n- [ ] Multi-factor authentication option\n- [ ] Secure session management\n\n### Authorization:\n- [ ] Principle of least privilege\n- [ ] Check permissions on every request\n- [ ] Don't expose internal IDs in URLs\n\n### Data Protection:\n- [ ] HTTPS everywhere\n- [ ] Encrypt sensitive data at rest\n- [ ] Secure headers (CSP, X-Frame-Options, etc.)\n- [ ] CORS properly configured\n\n### Common Vulnerabilities:\n- [ ] XSS: Escape output, use CSP\n- [ ] CSRF: Use tokens\n- [ ] Injection: Parameterized queries\n- [ ] Broken access control: Auth checks",
+            "source": "golden_seed",
+            "usageCount": 0
+        }
+    ],
+    "project_stacks": [
+        {
+            "id": "react_vite_supabase",
+            "name": "React + Vite + Supabase",
+            "description": "Full-stack setup with React frontend, Vite bundler, and Supabase for backend (Auth + DB + Storage)",
+            "techStack": {
+                "frontend": [
+                    "React",
+                    "Vite",
+                    "TypeScript",
+                    "Tailwind CSS"
+                ],
+                "backend": [
+                    "Supabase (Edge Functions)"
+                ],
+                "database": [
+                    "PostgreSQL (Supabase)"
+                ],
+                "auth": [
+                    "Supabase Auth"
+                ],
+                "hosting": [
+                    "Vercel",
+                    "Netlify"
+                ]
+            },
+            "preloadSkills": [
+                "auth_jwt_flow",
+                "react_component_arch",
+                "db_schema_design"
+            ],
+            "constraints": [
+                "No separate backend required",
+                "Supabase handles auth/db/storage"
+            ],
+            "isBuiltIn": true
+        },
+        {
+            "id": "nextjs_prisma_postgres",
+            "name": "Next.js + Prisma + PostgreSQL",
+            "description": "Full-stack Next.js with Prisma ORM and PostgreSQL database",
+            "techStack": {
+                "frontend": [
+                    "Next.js",
+                    "React",
+                    "TypeScript",
+                    "Tailwind CSS"
+                ],
+                "backend": [
+                    "Next.js API Routes"
+                ],
+                "database": [
+                    "PostgreSQL",
+                    "Prisma ORM"
+                ],
+                "auth": [
+                    "NextAuth.js"
+                ],
+                "hosting": [
+                    "Vercel"
+                ]
+            },
+            "preloadSkills": [
+                "react_component_arch",
+                "api_rest_design",
+                "db_schema_design"
+            ],
+            "constraints": [
+                "Serverless API routes",
+                "Type-safe database queries"
+            ],
+            "isBuiltIn": true
+        },
+        {
+            "id": "python_fastapi_postgres",
+            "name": "Python + FastAPI + PostgreSQL",
+            "description": "Python backend with FastAPI, SQLAlchemy, and PostgreSQL",
+            "techStack": {
+                "backend": [
+                    "Python",
+                    "FastAPI",
+                    "SQLAlchemy",
+                    "Pydantic"
+                ],
+                "database": [
+                    "PostgreSQL"
+                ],
+                "auth": [
+                    "OAuth2 + JWT"
+                ],
+                "hosting": [
+                    "Railway",
+                    "Render",
+                    "AWS Lambda"
+                ]
+            },
+            "preloadSkills": [
+                "api_rest_design",
+                "db_schema_design",
+                "auth_jwt_flow",
+                "error_handling"
+            ],
+            "constraints": [
+                "Async by default",
+                "Type hints required",
+                "OpenAPI auto-generated"
+            ],
+            "isBuiltIn": true
+        }
+    ]
+}

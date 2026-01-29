@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Plus, Maximize, Minus, UserCheck, Users, Trophy, Infinity, Code } from 'lucide-react';
+import { Plus, Maximize, Minus, UserCheck, Users, Trophy, Infinity, Code, Shield, Layers, Search, Swords } from 'lucide-react';
 import { Graph, Node } from '../types';
 
 interface GraphViewProps {
@@ -11,12 +11,84 @@ interface GraphViewProps {
 export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelect }) => {
     const svgRef = useRef<SVGSVGElement>(null);
     const [zoom, setZoom] = useState(1);
+    const [isTreeView, setIsTreeView] = useState(false);
+
+    // Toggle Layout Mode
+    const toggleLayout = () => setIsTreeView(!isTreeView);
+
+    // Simple Tree Layout Calculation (Vertical)
+    const getLayoutedNodes = (): Record<string, Node> => {
+        if (!isTreeView) return graph.nodes;
+
+        const nodes = Object.values(graph.nodes);
+        if (nodes.length === 0) return {};
+
+        const layouted: Record<string, Node> = {};
+        const childrenMap: Record<string, string[]> = {};
+        const roots: string[] = [];
+
+        // Build hierarchy map
+        nodes.forEach(n => {
+            if (n.parentId && graph.nodes[n.parentId]) {
+                if (!childrenMap[n.parentId]) childrenMap[n.parentId] = [];
+                childrenMap[n.parentId].push(n.id);
+            } else {
+                roots.push(n.id);
+            }
+        });
+
+        // Recursive position assignment
+        let currentX = 0;
+        const X_SPACING = 250;
+        const Y_SPACING = 150;
+
+        const assignPositions = (nodeId: string, depth: number) => {
+            const children = childrenMap[nodeId] || [];
+
+            // Process children first to center parent
+            const childXPositions: number[] = [];
+            children.forEach(cid => {
+                assignPositions(cid, depth + 1);
+                childXPositions.push(layouted[cid].x || 0);
+            });
+
+            let x = 0;
+            if (children.length === 0) {
+                x = currentX;
+                currentX += X_SPACING;
+            } else {
+                // Center over children
+                const minX = Math.min(...childXPositions);
+                const maxX = Math.max(...childXPositions);
+                x = (minX + maxX) / 2;
+            }
+
+            layouted[nodeId] = {
+                ...graph.nodes[nodeId],
+                x: x,
+                y: 100 + (depth * Y_SPACING)
+            };
+        };
+
+        roots.forEach(rid => assignPositions(rid, 0));
+        return layouted;
+    };
+
+    const displayNodes = isTreeView ? getLayoutedNodes() : graph.nodes;
 
     return (
         <div className="w-full h-full overflow-auto bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] relative">
 
-            {/* ZOOM CONTROLS */}
+            {/* CONTROLS */}
             <div className="absolute top-4 right-4 flex flex-col gap-2 z-50">
+                <button
+                    onClick={toggleLayout}
+                    className={`p-2 border rounded backdrop-blur-sm transition-colors ${isTreeView ? 'bg-emerald-900/50 text-white border-emerald-500' : 'bg-black/50 text-emerald-400 border-emerald-900 hover:bg-emerald-900/50'}`}
+                    title={isTreeView ? "Switch to Flat DAG View" : "Switch to Tree Hierarchy View"}
+                >
+                    <Layers className="w-4 h-4" />
+                </button>
+                <div className="h-px bg-emerald-900 my-1" />
                 <button
                     onClick={() => setZoom(z => Math.min(z + 0.1, 2.5))}
                     className="p-2 bg-black/50 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-900 rounded backdrop-blur-sm transition-colors"
@@ -48,13 +120,21 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
                 </defs>
 
                 {graph.edges.map((edge, i) => {
-                    const source = graph.nodes[edge.source];
-                    const target = graph.nodes[edge.target];
+                    const params = isTreeView ? displayNodes : graph.nodes;
+                    const source = params[edge.source];
+                    const target = params[edge.target];
+
                     if (!source || !target) return null;
 
-                    // Bezier for better visuals
+                    // If tree view, only show decomposition edges (parent->child) or keep dependencies? 
+                    // Let's keep all, but standard visual
                     const dx = (target.x! - source.x!) * 0.5;
-                    const d = `M${source.x},${source.y} C${source.x! + dx},${source.y} ${target.x! - dx},${target.y} ${target.x},${target.y}`;
+                    const dy = (target.y! - source.y!) * 0.5;
+
+                    // Vertical bezier for Tree, Horizontal for DAG
+                    const d = isTreeView
+                        ? `M${source.x},${source.y} C${source.x},${source.y! + dy} ${target.x},${target.y! - dy} ${target.x},${target.y}`
+                        : `M${source.x},${source.y} C${source.x! + dx},${source.y} ${target.x! - dx},${target.y} ${target.x},${target.y}`;
 
                     const isActive = source.status === 'complete' && target.status !== 'pending';
                     return (
@@ -62,7 +142,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
                     );
                 })}
 
-                {Object.values(graph.nodes).map((node: Node) => {
+                {Object.values(displayNodes).map((node: Node) => {
                     const isSelected = selectedId === node.id;
                     let stroke = "#064e3b";
                     let fill = "#022c22";
@@ -70,15 +150,42 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
 
                     if (node.status === 'complete') { stroke = "#10b981"; fill = "#064e3b"; }
 
-                    // Department Colors
-                    if (node.department === 'strategy') { fill = node.status === 'complete' ? '#581c87' : '#2e1065'; }
-                    if (node.department === 'marketing') { fill = node.status === 'complete' ? '#c2410c' : '#431407'; }
-                    if (node.department === 'ux') { fill = node.status === 'complete' ? '#831843' : '#4a044e'; }
-                    if (node.department === 'security') { fill = node.status === 'complete' ? '#7f1d1d' : '#450a0a'; }
-                    if (node.department === 'engineering') { fill = node.status === 'complete' ? '#1e3a8a' : '#172554'; }
+                    // Color code by Depth in Tree View
+                    if (isTreeView && node.depth !== undefined) {
+                        const depthColors = ['#0f172a', '#1e1b4b', '#312e81', '#4338ca', '#4f46e5', '#6366f1'];
+                        fill = depthColors[Math.min(node.depth, depthColors.length - 1)];
+                    }
 
-                    if (node.type === 'synthesizer') { radius = 30; stroke = "#f59e0b"; fill = "#451a03"; }
-                    if (node.type === 'gatekeeper') { radius = 15; stroke = "#f59e0b"; }
+                    // Department Colors (Original logic preserves if not overridden by logic above, but let's allow Department to override depth if meaningful?)
+                    // Actually, strategy says "Color-code by depth level". Let's prefer depth in Tree View.
+
+                    if (!isTreeView) {
+                        // Original Department Colors
+                        if (node.department === 'strategy') { fill = node.status === 'complete' ? '#581c87' : '#2e1065'; }
+                        if (node.department === 'marketing') { fill = node.status === 'complete' ? '#c2410c' : '#431407'; }
+                        if (node.department === 'ux') { fill = node.status === 'complete' ? '#831843' : '#4a044e'; }
+                        if (node.department === 'security') { fill = node.status === 'complete' ? '#7f1d1d' : '#450a0a'; }
+                        if (node.department === 'engineering') { fill = node.status === 'complete' ? '#1e3a8a' : '#172554'; }
+                    }
+
+                    // ... existing special node logic ...
+                    // Alchemist (Compiler) - larger amber node
+                    if (node.type === 'synthesizer' || node.type === 'lossless_compiler') {
+                        radius = 30;
+                        stroke = "#f59e0b";
+                        fill = "#451a03";
+                    }
+                    // Tribunal (Antagonist) - smaller amber node
+                    if (node.type === 'gatekeeper') {
+                        radius = 15;
+                        stroke = "#f59e0b";
+                    }
+                    // Security Patcher - red/rose node
+                    if (node.type === 'security_patcher') {
+                        radius = 22;
+                        stroke = "#f43f5e";
+                        fill = "#4c0519";
+                    }
 
                     // Status Effects
                     let animateClass = "";
@@ -86,8 +193,8 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
                         stroke = "#a855f7"; // Purple for verification
                         animateClass = "animate-pulse";
                     }
-                    if (node.status === 'synthesizing') {
-                        stroke = "#f59e0b"; // Amber for synthesis
+                    if (node.status === 'synthesizing' || node.status === 'compiling') {
+                        stroke = "#f59e0b"; // Amber for synthesis/compilation
                         animateClass = "animate-pulse";
                     }
                     if (node.status === 'critiquing') {
@@ -99,11 +206,47 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
                         fill = "#78350f"; // Dark Amber
                         animateClass = "animate-pulse";
                     }
+                    // V2.99 New Status Effects
+                    if (node.status === 'reflexion') {
+                        stroke = "#06b6d4"; // Cyan for reflexion
+                        animateClass = "animate-pulse";
+                    }
+                    if (node.status === 'surveying') {
+                        stroke = "#22c55e"; // Green for surveying
+                        animateClass = "animate-pulse";
+                    }
+                    if (node.status === 'auditing') {
+                        stroke = "#dc2626"; // Red for hostile audit
+                        animateClass = "animate-pulse";
+                    }
+                    if (node.status === 'patching') {
+                        stroke = "#f43f5e"; // Rose for security patching
+                        animateClass = "animate-pulse";
+                    }
 
                     if (isSelected) stroke = "#fff";
 
-                    // Oscillation Fix: Removed hover:scale-105 from the parent 'g'.
-                    // Added 'group' to parent and applied scaling to inner 'g'.
+                    // Get appropriate icon based on node type
+                    const getNodeIcon = () => {
+                        switch (node.type) {
+                            case 'specialist':
+                                return <UserCheck className="w-5 h-5 text-emerald-200 opacity-80" />;
+                            case 'domain_lead':
+                                return <Users className="w-5 h-5 text-white" />;
+                            case 'gatekeeper':
+                                // Tribunal (Antagonist) - Swords icon for hostile audit
+                                return <Swords className="w-5 h-5 text-amber-500" />;
+                            case 'synthesizer':
+                            case 'lossless_compiler':
+                                // Alchemist (Compiler) - Layers icon for assembly
+                                return <Layers className="w-5 h-5 text-amber-500" />;
+                            case 'security_patcher':
+                                return <Shield className="w-5 h-5 text-rose-400" />;
+                            default:
+                                return <Code className="w-5 h-5 text-blue-400" />;
+                        }
+                    };
+
                     return (
                         <g
                             key={node.id}
@@ -115,13 +258,17 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
                             <g className="transition-transform duration-300 group-hover:scale-110">
                                 <circle r={radius} fill={fill} stroke={stroke} strokeWidth={isSelected ? 3 : 2} className={`transition-colors duration-300 ${animateClass}`} />
                                 <g transform="translate(-10, -10)">
-                                    {node.type === 'specialist' ? <UserCheck className="w-5 h-5 text-emerald-200 opacity-80" /> :
-                                        node.type === 'domain_lead' ? <Users className="w-5 h-5 text-white" /> :
-                                            node.type === 'gatekeeper' ? <Trophy className="w-5 h-5 text-amber-500" /> :
-                                                node.type === 'synthesizer' ? <Infinity className="w-5 h-5 text-amber-500" /> :
-                                                    <Code className="w-5 h-5 text-blue-400" />}
+                                    {getNodeIcon()}
                                 </g>
                             </g>
+
+                            {/* ReCAP Expansion Badge */}
+                            {node.decompositionStatus === 'expanded' && (
+                                <g transform="translate(15, 15)">
+                                    <circle r="6" fill="#0ea5e9" stroke="#000" />
+                                    <Layers className="w-3 h-3 text-white" x="-1.5" y="-1.5" />
+                                </g>
+                            )}
 
                             {/* Score Badge */}
                             {node.score !== undefined && node.score !== 0 && (

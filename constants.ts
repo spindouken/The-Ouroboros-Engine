@@ -33,6 +33,7 @@ export const EXPERT_PERSONAS = {
 
 export const MODELS = [
     // Google Models
+    { id: 'gemini-3-flash', label: 'Gemini 3 Flash', desc: 'Next-Gen Speed & Intellect', rpm: 5, rpd: 20, provider: 'google' },
     { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'High Intelligence, Low Rate Limit', rpm: 2, rpd: 50, provider: 'google' },
     { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Balanced Speed & Intellect', rpm: 10, rpd: 250, provider: 'google' },
     { id: 'gemini-2.5-flash-preview', label: 'Gemini 2.5 Flash Preview', desc: 'Latest Flash Features', rpm: 10, rpd: 250, provider: 'google' },
@@ -40,6 +41,10 @@ export const MODELS = [
     { id: 'gemini-2.5-flash-lite-preview', label: 'Gemini 2.5 Flash-Lite Preview', desc: 'Latest Lite Features', rpm: 15, rpd: 1000, provider: 'google' },
     { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Legacy Flash', rpm: 15, rpd: 200, provider: 'google' },
     { id: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash-Lite', desc: 'Legacy Lite (High RPM)', rpm: 30, rpd: 200, provider: 'google' },
+    { id: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash Exp', desc: 'Experimental 2.0', rpm: 10, rpd: 1500, provider: 'google' },
+    // 1.5 Series (Stable)
+    { id: 'gemini-1.5-flash-001', label: 'Gemini 1.5 Flash', desc: 'Stable 1.5 Flash', rpm: 60, rpd: 1000, provider: 'google' },
+    { id: 'gemini-1.5-pro-001', label: 'Gemini 1.5 Pro', desc: 'Stable 1.5 Pro', rpm: 2, rpd: 50, provider: 'google' },
 
     // Gemma 3 Models (Free Tier)
     { id: 'gemma-3-27b', label: 'Gemma 3 27B', desc: 'High Intelligence Open Model', rpm: 30, rpd: 14400, provider: 'google' },
@@ -118,6 +123,7 @@ export const MODELS = [
 
     // Local / Custom
     { id: 'local-custom', label: 'Local / Custom (Ollama)', desc: 'Runs on your machine via Ollama', rpm: 9999, rpd: 9999, provider: 'local' },
+    { id: 'local-custom-small', label: 'Speed Engine (Small Model)', desc: 'For Repetitive Tasks (Local)', rpm: 9999, rpd: 9999, provider: 'local' },
 ];
 
 export const MODEL_TIERS = {
@@ -125,7 +131,7 @@ export const MODEL_TIERS = {
         'gemini-2.5-pro', 'gpt-4o', 'gpt-5.1', 'o1', 'claude-3-5-sonnet'
     ],
     'A_TIER': [
-        'gemini-2.5-flash', 'gpt-4o-mini', 'gpt-5-mini', 'claude-3-haiku',
+        'gemini-3-flash', 'gemma-3-27b', 'gemini-2.5-flash', 'gemini-1.5-flash-001', 'gemini-2.0-flash-exp', 'gpt-4o-mini', 'gpt-5-mini', 'claude-3-haiku',
         'meta-llama/llama-4-maverick-17b-128e-instruct',
         'moonshotai/kimi-k2-instruct',
         'moonshotai/kimi-k2-instruct-0905',
@@ -143,6 +149,7 @@ export const MODEL_TIERS = {
         'groq/compound-mini',
         'groq/compound',
         'local-custom',
+        'local-custom-small',
         'x-ai/grok-4.1-fast:free',
         'google/gemini-2.0-flash-exp:free',
         'openai/gpt-oss-20b:free',

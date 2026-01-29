@@ -8,23 +8,25 @@ import ReactFlow, {
     NodeChange,
     EdgeChange,
     Connection,
-    applyNodeChanges,
-    applyEdgeChanges,
-    addEdge,
+    MarkerType,
     useReactFlow
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import AgentNode from './nodes/AgentNode';
+import PrismNode from './nodes/PrismNode';
+import ConstitutionNode from './nodes/ConstitutionNode';
 import { calculateLayout } from '../utils/graphLayout';
 import { LayoutGrid } from 'lucide-react';
+import { useOuroborosStore } from '../store/ouroborosStore';
+import { AppMode } from '../types';
 
 const nodeTypes: NodeTypes = {
     agentNode: AgentNode,
+    prismNode: PrismNode,
+    constitutionNode: ConstitutionNode
 };
-
-import { AppMode } from '../types';
 
 interface FlowCanvasProps {
     onNodeClick?: (nodeId: string) => void;
@@ -35,26 +37,101 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick, appMode }) 
     // Local-First: Query DB directly
     const dbNodes = useLiveQuery(() => db.nodes.toArray()) || [];
     const dbEdges = useLiveQuery(() => db.edges.toArray()) || [];
+    const store = useOuroborosStore();
 
     const filteredNodes = useMemo(() => dbNodes.filter(n => n.mode === appMode), [dbNodes, appMode]);
 
-    // Map DB nodes to ReactFlow nodes
-    const nodes = useMemo(() => filteredNodes.map(n => ({
-        id: n.id,
-        type: 'agentNode',
-        position: { x: n.x || 0, y: n.y || 0 },
-        data: n,
-    })), [filteredNodes]);
+    // Map DB nodes to ReactFlow nodes + Inject System Nodes
+    const nodes = useMemo(() => {
+        const flowNodes: any[] = filteredNodes.map(n => ({
+            id: n.id,
+            type: 'agentNode',
+            position: { x: n.x || 0, y: n.y || 0 },
+            data: n,
+        }));
 
-    // Map DB edges to ReactFlow edges
-    const edges = useMemo(() => dbEdges.map(e => ({
-        id: e.id ? `e-${e.id}` : `e-${e.source}-${e.target}`,
-        source: e.source,
-        target: e.target,
-        animated: true,
-        style: { stroke: '#10b981', strokeWidth: 2 },
-        type: 'smoothstep'
-    })), [dbEdges]);
+        // INJECT: PRISM NODE (If analysis exists)
+        if (store.prismAnalysis) {
+            const analysis = store.prismAnalysis;
+            const fastCount = analysis.stepC.fastPathTasks.length;
+
+            flowNodes.push({
+                id: 'system_prism',
+                type: 'prismNode',
+                position: { x: 0, y: -250 }, // Fixed Top Center
+                data: {
+                    status: 'complete',
+                    councilCount: analysis.stepB.council.specialists.length,
+                    taskCount: analysis.stepB.atomicTasks.length,
+                    domain: analysis.stepA.domain,
+                    fastPath: fastCount
+                }
+            });
+        }
+
+        // INJECT: CONSTITUTION NODE (Always exists if Genesis ran)
+        if (store.livingConstitution) {
+            const consti = store.livingConstitution;
+            flowNodes.push({
+                id: 'system_constitution',
+                type: 'constitutionNode',
+                position: { x: 600, y: 0 }, // Fixed Right Sidecar
+                data: {
+                    domain: consti.domain,
+                    constraintCount: consti.constraints.length,
+                    decisionCount: consti.decisions.length || 0,
+                    warningCount: consti.warnings?.length || 0,
+                    lastUpdated: Date.now(), // Estimate
+                    updateCount: (consti.decisions.length + (consti.warnings?.length || 0))
+                }
+            });
+        }
+
+        return flowNodes;
+    }, [filteredNodes, store.prismAnalysis, store.livingConstitution]);
+
+    // Map DB edges + Inject System Edges
+    const edges = useMemo(() => {
+        const flowEdges: any[] = dbEdges.map(e => ({
+            id: e.id ? `e-${e.id}` : `e-${e.source}-${e.target}`,
+            source: e.source,
+            target: e.target,
+            animated: true,
+            style: { stroke: '#10b981', strokeWidth: 2 },
+            type: 'smoothstep'
+        }));
+
+        // INJECT: PRISM -> SPECIALISTS connection
+        if (store.prismAnalysis) {
+            // Find all specialist nodes
+            filteredNodes.filter(n => n.type === 'specialist').forEach(node => {
+                flowEdges.push({
+                    id: `e-prism-${node.id}`,
+                    source: 'system_prism',
+                    target: node.id,
+                    animated: true,
+                    style: { stroke: '#a855f7', strokeWidth: 2, strokeDasharray: '5,5' }, // Purple dashed
+                    type: 'default'
+                });
+            });
+        }
+
+        // INJECT: SPECIALISTS -> CONSTITUTION connection
+        if (store.livingConstitution) {
+            filteredNodes.filter(n => n.type === 'specialist' || n.type === 'lossless_compiler').forEach(node => {
+                flowEdges.push({
+                    id: `e-${node.id}-constitution`,
+                    source: node.id,
+                    target: 'system_constitution',
+                    animated: false,
+                    style: { stroke: '#f59e0b', strokeWidth: 1, opacity: 0.5 }, // Amber thin
+                    type: 'straight'
+                });
+            });
+        }
+
+        return flowEdges;
+    }, [dbEdges, filteredNodes, store.prismAnalysis, store.livingConstitution]);
 
     const onNodesChange = useCallback((changes: NodeChange[]) => {
         changes.forEach(change => {

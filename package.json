@@ -1,7 +1,7 @@
 {
   "name": "ouroboros-engine",
   "private": true,
-  "version": "2.6.6",
+  "version": "2.99.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,8 @@
     "dexie": "^4.2.1",
     "dexie-react-hooks": "^4.2.0",
     "framer-motion": "^11.0.0",
+    "js-yaml": "^4.1.1",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.344.0",
     "openai": "^6.10.0",
     "react": "^18.2.0",
@@ -26,6 +28,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.11.24",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",

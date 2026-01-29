@@ -25,6 +25,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const [showHydraEditor, setShowHydraEditor] = useState(false);
     const engine = OuroborosEngine.getInstance();
     const { playClick, playHover } = useSoundEffects();
+    const { usageMetrics } = useOuroborosStore();
 
 
 
@@ -144,8 +145,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         onClick={() => {
                                             playClick();
                                             onUpdate({
+                                                // Legacy settings
                                                 model_specialist: '', model_lead: '', model_architect: '',
-                                                model_synthesizer: '', model_judge: '', model_manifestation: '', model_prism: ''
+                                                model_synthesizer: '', model_judge: '', model_manifestation: '', model_prism: '',
+                                                // V2.99 settings (clears stale values)
+                                                model_reflexion: '', model_antagonist: '', model_compiler: '',
+                                                model_genesis: '', model_oracle: '', model_fast: ''
                                             });
                                         }}
                                         onMouseEnter={() => playHover()}
@@ -175,6 +180,24 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         onClick={() => {
                                             playClick();
                                             onUpdate({
+                                                model_specialist: 'gemini-3-flash',
+                                                model_lead: 'gemini-3-flash',
+                                                model_architect: 'gemini-3-flash',
+                                                model_synthesizer: 'gemini-3-flash',
+                                                model_judge: 'gemini-3-flash',
+                                                model_manifestation: 'gemini-3-flash',
+                                                model_prism: 'gemini-3-flash'
+                                            });
+                                        }}
+                                        onMouseEnter={() => playHover()}
+                                        className="px-2 py-1 bg-amber-900/20 border border-amber-900/50 rounded text-[10px] text-amber-400 hover:bg-amber-900/40"
+                                    >
+                                        Gemini 3 Speed
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            playClick();
+                                            onUpdate({
                                                 model_specialist: 'gemma-3-4b',
                                                 model_lead: 'gemma-3-12b',
                                                 model_architect: 'gemma-3-27b',
@@ -195,12 +218,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     <div className="space-y-2">
                                         <h4 className="text-[10px] font-bold text-emerald-500 border-b border-emerald-900/50 pb-1 mb-2">REFINE MODE (The Council)</h4>
                                         {[
-                                            { label: 'Prism (Agent Spawner)', key: 'model_prism' },
+                                            { label: 'Genesis (Originator)', key: 'model_genesis' },
+                                            { label: 'Prism (Decomposer)', key: 'model_prism' },
                                             { label: 'Oracle (Interviewer)', key: 'model_oracle' },
-                                            { label: 'Domain Lead (Shared)', key: 'model_lead' },
-                                            { label: 'Specialist (Shared)', key: 'model_specialist' },
+                                            { label: 'Tribunal (Antagonist)', key: 'model_antagonist' },
                                             { label: 'Synthesizer (Alchemist)', key: 'model_synthesizer' },
-                                            { label: 'Judge (Tribunal)', key: 'model_judge' },
                                         ].map(({ label, key }) => (
                                             <div key={`refine_${key}`} className="space-y-1">
                                                 <label className="text-[10px] text-emerald-600 font-bold">{label}</label>
@@ -228,10 +250,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     <div className="space-y-2">
                                         <h4 className="text-[10px] font-bold text-amber-500 border-b border-amber-900/50 pb-1 mb-2">MANIFEST MODE (The Builder)</h4>
                                         {[
+                                            { label: 'Specialist (Worker)', key: 'model_specialist' },
                                             { label: 'Architect (Planner)', key: 'model_architect' },
-                                            { label: 'Tech Lead (Shared)', key: 'model_lead' },
-                                            { label: 'Specialist (Shared)', key: 'model_specialist' },
+                                            { label: 'Reflexion (Fast/Repair)', key: 'model_reflexion' },
                                             { label: 'Manifestation (Compiler)', key: 'model_manifestation' },
+                                            { label: 'General Fast (Utility)', key: 'model_fast' },
                                         ].map(({ label, key }) => (
                                             <div key={`manifest_${key}`} className="space-y-1">
                                                 <label className="text-[10px] text-emerald-600 font-bold">{label}</label>
@@ -252,7 +275,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                     ))}
                                                 </select>
                                             </div>
-                                        ))}
+                                        ))
+                                        }
                                     </div>
                                 </div>
                             </div>
@@ -295,65 +319,170 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 </div>
                             </div>
 
-                            {/* MDAP PROTOCOLS */}
+                            {/* V2.99 PROTOCOLS */}
                             <div className="space-y-3 pt-4 border-t border-emerald-900/30">
                                 <label className="text-xs font-bold text-emerald-700 flex items-center gap-2">
-                                    <Shield className="w-3 h-3" /> MDAP PROTOCOLS
+                                    <Shield className="w-3 h-3" /> V2.99 FACTORY PROTOCOLS
                                 </label>
+                                <p className="text-[10px] text-emerald-800 italic">
+                                    Core safety protocols are mandatory. Quality strictness is configurable via Turbo Mode.
+                                </p>
 
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
                                         <span className="text-xs text-emerald-400">Red Flagging</span>
                                         <input
                                             type="checkbox"
-                                            checked={settings.enableRedFlagging || false}
-                                            onChange={(e) => onUpdate({ enableRedFlagging: e.target.checked })}
-                                            className="accent-emerald-500"
+                                            checked={true}
+                                            disabled
+                                            className="accent-emerald-500 opacity-50"
+                                            title="Safety is not optional"
                                         />
                                     </div>
                                     <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
-                                        <span className="text-xs text-emerald-400">Multi-Round Voting</span>
+                                        <span className="text-xs text-emerald-400">Antagonist Protocol</span>
                                         <input
                                             type="checkbox"
-                                            checked={settings.enableMultiRoundVoting || false}
-                                            onChange={(e) => onUpdate({ enableMultiRoundVoting: e.target.checked })}
+                                            checked={settings.enableAntagonistProtocol ?? true}
+                                            onChange={(e) => onUpdate({ enableAntagonistProtocol: e.target.checked })}
                                             className="accent-emerald-500"
+                                            title="Toggle Tribunal (Antagonist) audit"
                                         />
                                     </div>
                                     <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
                                         <span className="text-xs text-emerald-400">Agent Memory</span>
                                         <input
                                             type="checkbox"
-                                            checked={settings.enableAgentMemory || false}
-                                            onChange={(e) => onUpdate({ enableAgentMemory: e.target.checked })}
+                                            checked={true}
+                                            disabled
+                                            className="accent-emerald-500 opacity-50"
+                                            title="Learning is not optional"
+                                        />
+                                    </div>
+                                    <div className="flex items-center justify-between p-2 bg-black border border-amber-900/50 rounded">
+                                        <div className="flex flex-col">
+                                            <span className="text-xs text-amber-500 font-bold">Allow Code Gen</span>
+                                            <span className="text-[9px] text-amber-600/70">Experimental</span>
+                                        </div>
+                                        <input
+                                            type="checkbox"
+                                            checked={settings.allowCodeGeneration || false}
+                                            onChange={(e) => onUpdate({ allowCodeGeneration: e.target.checked })}
+                                            className="accent-amber-500"
+                                            title="Allow implementation code generation (Bypasses Security Veto)"
+                                        />
+                                    </div>
+
+                                    {/* V2.99 Final Gaps Features */}
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex flex-col">
+                                                <span className="text-xs text-emerald-400">Adaptive Routing</span>
+                                                <span className="text-[9px] text-emerald-600">Smart routing by complexity</span>
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                checked={settings.enableAdaptiveRouting || false}
+                                                onChange={(e) => onUpdate({ enableAdaptiveRouting: e.target.checked })}
+                                                className="accent-emerald-500"
+                                            />
+                                        </div>
+                                        {settings.enableAdaptiveRouting && (
+                                            <div className="space-y-1 mt-1 border-t border-emerald-900/30 pt-1">
+                                                <label className="text-[9px] text-emerald-600 font-bold">Fast Model (Low Complexity)</label>
+                                                <select
+                                                    value={settings.model_fast || ""}
+                                                    onChange={(e) => onUpdate({ model_fast: e.target.value })}
+                                                    className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-[10px] focus:border-emerald-500 focus:outline-none"
+                                                >
+                                                    <option value="">Use Default ({MODELS.find(m => m.id === settings.model)?.label})</option>
+                                                    {MODELS.filter(m => selectedProvider === 'all' || m.provider === selectedProvider).map(m => (
+                                                        <option key={m.id} value={m.id}>{m.label}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
+                                        <div className="flex flex-col">
+                                            <span className="text-xs text-emerald-400">Predictive Cost Scaling</span>
+                                            <span className="text-[9px] text-emerald-600">Auto-upgrade on failure</span>
+                                        </div>
+                                        <input
+                                            type="checkbox"
+                                            checked={settings.enablePredictiveCostScaling || false}
+                                            onChange={(e) => onUpdate({ enablePredictiveCostScaling: e.target.checked })}
                                             className="accent-emerald-500"
                                         />
                                     </div>
+
+                                    {/* Consistency Layer Settings */}
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex flex-col">
+                                                <span className="text-xs text-emerald-400">Project Insight (Consistency)</span>
+                                                <span className="text-[9px] text-emerald-600">Mid-term memory synthesizer</span>
+                                            </div>
+                                            <div className="text-[9px] text-emerald-500 italic">Always Active</div>
+                                        </div>
+                                        <div className="space-y-1 mt-1 border-t border-emerald-900/30 pt-1">
+                                            <label className="text-[9px] text-emerald-600 font-bold">Historian Model</label>
+                                            <select
+                                                value={settings.model_project_insight || ""}
+                                                onChange={(e) => onUpdate({ model_project_insight: e.target.value })}
+                                                className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-[10px] focus:border-emerald-500 focus:outline-none"
+                                            >
+                                                <option value="">Use Default ({MODELS.find(m => m.id === settings.model)?.label})</option>
+                                                {MODELS.filter(m => selectedProvider === 'all' || m.provider === selectedProvider).map(m => (
+                                                    <option key={m.id} value={m.id}>{m.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Disabled Red Flags */}
+                                    <div className="col-span-2 p-2 bg-black border border-emerald-900 rounded mt-1">
+                                        <span className="text-xs text-emerald-400 font-bold block mb-2">Disable Specific Red Flags</span>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {[
+                                                { id: 'too_short', label: 'Too Short (<50 chars)' },
+                                                { id: 'too_generic', label: 'Too Generic (Placeholders)' },
+                                                { id: 'contradictory', label: 'Contradictory' },
+                                                { id: 'low_confidence', label: 'Low Confidence' }
+                                            ].map(flag => (
+                                                <label key={flag.id} className="flex items-center gap-2 cursor-pointer hover:bg-emerald-900/10 rounded p-1">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={settings.disabledRedFlags?.includes(flag.id as any) || false}
+                                                        onChange={(e) => {
+                                                            const current = settings.disabledRedFlags || [];
+                                                            if (e.target.checked) {
+                                                                onUpdate({ disabledRedFlags: [...current, flag.id as any] });
+                                                            } else {
+                                                                onUpdate({ disabledRedFlags: current.filter(f => f !== flag.id) });
+                                                            }
+                                                        }}
+                                                        className="accent-red-500"
+                                                    />
+                                                    <span className="text-[10px] text-emerald-500">{flag.label}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-emerald-600 font-bold">Max Micro-Agent Depth</label>
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            max="5"
-                                            value={settings.maxMicroAgentDepth || 3}
-                                            onChange={(e) => onUpdate({ maxMicroAgentDepth: parseInt(e.target.value) })}
-                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-emerald-600 font-bold">Initial Judge Count</label>
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            max="9"
-                                            value={settings.initialJudgeCount || 3}
-                                            onChange={(e) => onUpdate({ initialJudgeCount: parseInt(e.target.value) })}
-                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
-                                        />
-                                    </div>
+                                <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
+                                    <span className="text-xs text-emerald-400">Pre-Seed Library (Golden Seeds)</span>
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.enableGoldenSeeds ?? false}
+                                        onChange={(e) => onUpdate({ enableGoldenSeeds: e.target.checked })}
+                                        className="accent-emerald-500"
+                                        title="Enable verified template matching"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4 mt-3">
                                     <div className="space-y-1">
                                         <label className="text-[10px] text-emerald-600 font-bold">Consensus Threshold (%)</label>
                                         <input
@@ -364,6 +493,161 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                             onChange={(e) => onUpdate({ consensusThreshold: parseInt(e.target.value) })}
                                             className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
                                         />
+                                    </div>
+                                </div>
+
+
+                                {/* TURBO MODE (V2.99) */}
+                                <div className="mt-3 pt-3 border-t border-emerald-900/30">
+                                    <div className="flex items-center justify-between pb-2">
+                                        <span className="text-xs text-emerald-500 font-bold flex items-center gap-1" title="Skip 'Too Generic' checks for simple tasks">
+                                            <Zap className="w-3 h-3 text-amber-500" /> TURBO MODE
+                                        </span>
+                                        <input
+                                            type="checkbox"
+                                            checked={settings.turboMode || false}
+                                            onChange={(e) => onUpdate({ turboMode: e.target.checked })}
+                                            className="accent-amber-500"
+                                            title="Force Turbo Mode ON (Skips Generic Checks)"
+                                        />
+                                    </div>
+                                    <div className="pl-4 space-y-2 border-l-2 border-emerald-900/30">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] text-emerald-500" title="Automatically enable Turbo Mode for low complexity tasks (Recommended)">Auto-Enable (Smart)</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={settings.autoTurboMode !== false}
+                                                onChange={(e) => onUpdate({ autoTurboMode: e.target.checked })}
+                                                className="accent-emerald-500"
+                                            />
+                                        </div>
+                                        {(settings.autoTurboMode !== false) && (
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] text-emerald-600 font-bold" title="Tasks with complexity LOWER than this will trigger Turbo Mode">Complexity Threshold ({settings.turboComplexityThreshold || 5})</label>
+                                                <input
+                                                    type="range"
+                                                    min="1"
+                                                    max="10"
+                                                    value={settings.turboComplexityThreshold || 5}
+                                                    onChange={(e) => onUpdate({ turboComplexityThreshold: parseInt(e.target.value) })}
+                                                    className="w-full accent-emerald-500 h-1 bg-emerald-900 rounded-lg appearance-none cursor-pointer"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* PRISM DECOMPOSITION SETTINGS */}
+                                <div className="mt-4 pt-4 border-t border-emerald-900/30">
+                                    <label className="text-[10px] font-bold text-amber-500 flex items-center gap-2 mb-3" title="Controls how Prism breaks down goals into tasks">
+                                        🔮 PRISM DECOMPOSITION SETTINGS
+                                    </label>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {/* Max Atomic Tasks */}
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] text-emerald-600 font-bold" title="Limit the number of tasks Prism can create (Breadth Control)">Max Atomic Tasks</label>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={settings.maxAtomicTasks !== undefined}
+                                                    onChange={(e) => onUpdate({ maxAtomicTasks: e.target.checked ? 20 : undefined })}
+                                                    className="accent-amber-500 w-3 h-3"
+                                                />
+                                            </div>
+                                            {settings.maxAtomicTasks !== undefined ? (
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="range"
+                                                        min="5"
+                                                        max="50"
+                                                        value={settings.maxAtomicTasks}
+                                                        onChange={(e) => onUpdate({ maxAtomicTasks: parseInt(e.target.value) })}
+                                                        className="flex-1 accent-amber-500 h-1 bg-emerald-900 rounded-lg appearance-none cursor-pointer"
+                                                    />
+                                                    <span className="text-amber-400 text-xs font-bold w-6">{settings.maxAtomicTasks}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="text-[9px] text-emerald-800 italic h-5 flex items-center">Auto-Detected (Unlimited)</div>
+                                            )}
+                                            <p className="text-[9px] text-emerald-800">Use for MVP or Budget constraints</p>
+                                        </div>
+
+                                        {/* Max Decomposition Passes */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-emerald-600 font-bold" title="How many times Prism re-checks and splits tasks (Depth Refinement)">Max Decomp. Passes</label>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="range"
+                                                    min="1"
+                                                    max="10"
+                                                    value={settings.maxDecompositionPasses || 3}
+                                                    onChange={(e) => onUpdate({ maxDecompositionPasses: parseInt(e.target.value) })}
+                                                    className="flex-1 accent-amber-500 h-1 bg-emerald-900 rounded-lg appearance-none cursor-pointer"
+                                                />
+                                                <span className="text-amber-400 text-xs font-bold w-6">{settings.maxDecompositionPasses || 3}</span>
+                                            </div>
+                                            <p className="text-[9px] text-emerald-800">Higher = More granular tasks</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4 mt-3">
+                                        {/* Max Council Size */}
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] text-emerald-600 font-bold" title="Limit the number of specialists hired (Cost/Parallelism Control)">Max Council Size</label>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={settings.maxCouncilSize !== undefined}
+                                                    onChange={(e) => onUpdate({ maxCouncilSize: e.target.checked ? 5 : undefined })}
+                                                    className="accent-amber-500 w-3 h-3"
+                                                />
+                                            </div>
+                                            {settings.maxCouncilSize !== undefined ? (
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="range"
+                                                        min="3"
+                                                        max="15"
+                                                        value={settings.maxCouncilSize}
+                                                        onChange={(e) => onUpdate({ maxCouncilSize: parseInt(e.target.value) })}
+                                                        className="flex-1 accent-amber-500 h-1 bg-emerald-900 rounded-lg appearance-none cursor-pointer"
+                                                    />
+                                                    <span className="text-amber-400 text-xs font-bold w-6">{settings.maxCouncilSize}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="text-[9px] text-emerald-800 italic h-5 flex items-center">Auto-Detected</div>
+                                            )}
+                                        </div>
+
+                                        {/* Recursive Decomposition Toggle */}
+                                        <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded mt-0">
+                                            <div>
+                                                <span className="text-xs text-emerald-400" title="Allow tasks to spawn their own sub-projects (Fractal Growth)">Recursive Decomp.</span>
+                                                <p className="text-[9px] text-emerald-700">Explosive vertical expansion</p>
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                checked={settings.enableRecursiveDecomposition || false}
+                                                onChange={(e) => onUpdate({ enableRecursiveDecomposition: e.target.checked })}
+                                                className="accent-amber-500"
+                                            />
+                                        </div>
+
+                                        {/* JSON Retry Mode */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-emerald-600 font-bold">JSON Retry Mode</label>
+                                            <select
+                                                value={settings.jsonRetryMode || 'prompt'}
+                                                onChange={(e) => onUpdate({ jsonRetryMode: e.target.value as 'none' | 'all' | 'prompt' })}
+                                                className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                            >
+                                                <option value="prompt">Prompt User</option>
+                                                <option value="all">Auto-Retry All</option>
+                                                <option value="none">Skip (No Retry)</option>
+                                            </select>
+                                            <p className="text-[9px] text-emerald-800">On JSON parse failure</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -440,11 +724,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     <Gauge className="w-3 h-3" /> SESSION USAGE METRICS
                                 </label>
                                 <div className="bg-black border border-emerald-900 rounded p-3 text-xs max-h-40 overflow-y-auto custom-scrollbar">
-                                    {Object.keys(useOuroborosStore.getState().usageMetrics || {}).length === 0 ? (
+                                    {Object.keys(usageMetrics || {}).length === 0 ? (
                                         <div className="text-emerald-800 italic text-center">No usage recorded this session.</div>
                                     ) : (
                                         <div className="space-y-2">
-                                            {Object.entries(useOuroborosStore.getState().usageMetrics || {}).map(([modelId, metrics]) => (
+                                            {Object.entries(usageMetrics || {}).map(([modelId, metrics]) => (
                                                 <div key={modelId} className="flex justify-between items-center border-b border-emerald-900/30 pb-1 last:border-0">
                                                     <span className="font-bold text-emerald-500">{MODELS.find(m => m.id === modelId)?.label || modelId}</span>
                                                     <div className="text-right">
@@ -456,7 +740,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                             <div className="pt-2 border-t border-emerald-500/30 flex justify-between items-center font-bold text-emerald-400">
                                                 <span>TOTAL SESSION</span>
                                                 <span>
-                                                    {Object.values(useOuroborosStore.getState().usageMetrics || {})
+                                                    {Object.values(usageMetrics || {})
                                                         .reduce((acc, m) => acc + m.totalTokens, 0).toLocaleString()} tokens
                                                 </span>
                                             </div>
@@ -641,7 +925,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-emerald-600 font-bold">Model ID</label>
+                                        <label className="text-[10px] text-emerald-600 font-bold">Model ID (Power Engine)</label>
                                         <input
                                             type="text"
                                             value={settings.localModelId || 'gemma:7b'}
@@ -651,6 +935,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                 engine.updateKeys(undefined, undefined, undefined, undefined, val);
                                             }}
                                             placeholder="gemma:7b"
+                                            className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div className="space-y-1 col-span-2">
+                                        <label className="text-[10px] text-emerald-600 font-bold">Speed Engine (Small Model ID)</label>
+                                        <input
+                                            type="text"
+                                            value={settings.localSmallModelId || 'gemma:2b'}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                onUpdate({ localSmallModelId: val });
+                                                engine.setLocalSmallModelId(val);
+                                            }}
+                                            placeholder="gemma:2b"
                                             className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
                                         />
                                     </div>
@@ -675,7 +973,35 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     Test Connection
                                 </button>
                             </div>
-                            <div className="p-2 bg-amber-900/10 border border-amber-900/30 rounded text-[10px] text-amber-500/80 italic">
+
+                            {/* DANGER ZONE - HARD RESET */}
+                            <div className="mt-4 p-3 border border-red-900/50 bg-red-950/20 rounded">
+                                <div className="flex items-center gap-2 text-red-500 font-bold text-xs mb-2">
+                                    <Bug className="w-4 h-4" /> DANGER ZONE
+                                </div>
+                                <p className="text-[10px] text-red-400/80 mb-3 leading-relaxed">
+                                    If the Factory is completely stuck, use this to wipe EVERYTHING (Local Storage, Database, Cache) and force a hard reload.
+                                    This cannot be undone.
+                                </p>
+                                <button
+                                    onClick={async () => {
+                                        if (confirm("⚠️ NUCLEAR LAUNCH DETECTED ⚠️\n\nThis will wipe ALL your Ouroboros data, settings, and sessions permanently.\n\nAre you sure you want to proceed?")) {
+                                            playClick();
+                                            // 1. Clear Database
+                                            await engine.clearSession();
+                                            // 2. Clear Local Storage
+                                            localStorage.clear();
+                                            // 3. Force Reload
+                                            window.location.reload();
+                                        }
+                                    }}
+                                    className="w-full py-2 bg-red-900/40 hover:bg-red-600 border border-red-800 text-red-200 hover:text-white font-bold text-xs rounded tracking-widest flex items-center justify-center gap-2 transition-all"
+                                >
+                                    <Terminal className="w-3 h-3" /> FACTORY RESET (NUKE)
+                                </button>
+                            </div>
+
+                            <div className="p-2 bg-amber-900/10 border border-amber-900/30 rounded text-[10px] text-amber-500/80 italic mt-2">
                                 Disclaimer: All data is stored locally in your browser (IndexedDB). Clearing browser data will wipe your Ouroboros sessions.
                             </div>
                         </div>
@@ -694,7 +1020,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                     </button>
                 </div>
             </div>
-        </div>
+        </div >
     );
 
     if (showHydraEditor) {

@@ -7,7 +7,7 @@ import { Save, FolderOpen, Trash2, Download, Upload, Plus } from 'lucide-react';
 import { useSoundEffects } from '../hooks/useSoundEffects';
 
 export const SessionCodex: React.FC = () => {
-    const sessions = useLiveQuery(() => db.projects.toArray()) || [];
+    const sessions = useLiveQuery(() => db.projects.orderBy('updatedAt').reverse().toArray()) || [];
     const { currentSessionId, currentSessionName } = useOuroborosStore();
     const engine = OuroborosEngine.getInstance();
     const { playClick, playHover } = useSoundEffects();

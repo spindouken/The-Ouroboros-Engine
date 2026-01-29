@@ -96,11 +96,11 @@ export class RedFlagValidatorImpl implements RedFlagValidator {
    * 
    * Requirements: 2.1, 2.2, 2.3, 2.4
    */
-  validate(output: string, confidence: number): ValidationResult {
+  validate(output: string, confidence: number, turboMode: boolean = false, disabledFlags: RedFlagType[] = []): ValidationResult {
     const flags: RedFlag[] = [];
 
-    // Check for too short output
-    if (RED_FLAG_RULES.tooShort(output)) {
+    // Check for too short output (Skipped in Turbo Mode or if disabled)
+    if (!disabledFlags.includes('too_short') && !turboMode && RED_FLAG_RULES.tooShort(output)) {
       flags.push({
         type: 'too_short',
         severity: 'high',
@@ -109,8 +109,8 @@ export class RedFlagValidatorImpl implements RedFlagValidator {
       });
     }
 
-    // Check for generic placeholder text
-    if (RED_FLAG_RULES.tooGeneric(output)) {
+    // Check for generic placeholder text (Skipped in Turbo Mode or if disabled)
+    if (!disabledFlags.includes('too_generic') && !turboMode && RED_FLAG_RULES.tooGeneric(output)) {
       flags.push({
         type: 'too_generic',
         severity: 'high',
@@ -120,7 +120,7 @@ export class RedFlagValidatorImpl implements RedFlagValidator {
     }
 
     // Check for contradictory statements
-    if (RED_FLAG_RULES.contradictory(output)) {
+    if (!disabledFlags.includes('contradictory') && RED_FLAG_RULES.contradictory(output)) {
       const markers = output.match(
         /\b(but|however|on the other hand|conversely|although|though|yet|nevertheless|nonetheless)\b/gi
       );
@@ -133,7 +133,7 @@ export class RedFlagValidatorImpl implements RedFlagValidator {
     }
 
     // Check for low confidence
-    if (RED_FLAG_RULES.lowConfidence(confidence)) {
+    if (!disabledFlags.includes('low_confidence') && RED_FLAG_RULES.lowConfidence(confidence)) {
       flags.push({
         type: 'low_confidence',
         severity: 'medium',

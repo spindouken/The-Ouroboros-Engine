@@ -53,7 +53,7 @@ Oracle → Genesis → Prism → Saboteur → [User Review]
               │  Specialist → Reflexion → Surveyor  │
               │       ↓                      ↓      │
               │  [Self-Check]         [Red Flags]   │
-              │                             ↓      │
+              │                             ↓       │
               │              Antagonist Mirror      │
               │              (1-on-1 Duel)          │
               │                     ↓               │

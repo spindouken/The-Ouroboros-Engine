@@ -349,13 +349,25 @@ The-Ouroboros-Engine/
 │   ├── LogViewer.tsx              # Debug log display
 │   ├── NodeInspector.tsx          # Brick inspection
 │   ├── SessionCodex.tsx           # Time-travel UI
-│   └── oracle/                    # Oracle interview components
+│   ├── JsonRetryDialog.tsx        # JSON repair interface
+│   ├── oracle/                    # 🔮 The Oracle components
+│   ├── nodes/                     # 🧩 Custom ReactFlow nodes
+│   └── settings/                  # ⚙️ Granular settings components
 │
 ├── db/                            # 💾 Database Layer
-│   └── ouroborosDB.ts             # Dexie.js schema & operations
+│   ├── ouroborosDB.ts             # Dexie.js schema & operations
+│   └── seed-loader.ts             # Golden seed data population
 │
 ├── store/                         # 📊 State Management
 │   └── ouroborosStore.ts          # Zustand store
+│
+├── utils/                         # 🛠️ Utilities
+│   ├── safe-json.ts               # Robust JSON parsing
+│   ├── graphLayout.ts             # DAG layout logic
+│   └── system-constraints.ts      # Hardware/capability checks
+│
+├── hooks/                         # 🪝 Custom Hooks
+│   └── useSoundEffects.ts         # Audio feedback
 │
 ├── prism-controller.ts            # 🔮 The Prism - Decomposition
 ├── multi-round-voting.ts          # ⚖️ Tribunal voting system

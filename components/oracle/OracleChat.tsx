@@ -5,7 +5,7 @@ import { Send, Sparkles, X, RotateCcw } from 'lucide-react';
 import { ClarityGauge } from './ClarityGauge';
 
 export const OracleChat: React.FC = () => {
-    const { oracleChatHistory, addOracleMessage, isOracleActive, toggleOracle, setFusedContext, setDocumentContent, documentContent, clarityScore } = useOuroborosStore();
+    const { oracleChatHistory, addOracleMessage, isOracleActive, toggleOracle, setFusedContext, setDocumentContent, documentContent, clarityScore, potentialConstitutions, setPotentialConstitutions } = useOuroborosStore();
     const [input, setInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -21,16 +21,84 @@ export const OracleChat: React.FC = () => {
     const handleSend = async () => {
         if (!input.trim() || isProcessing) return;
 
+        // If we are in "Vibe Generation Mode" (Empty history, no vibes yet)
+        if (oracleChatHistory.length === 0 && !potentialConstitutions) {
+            handleGenerateVibes(input);
+            return;
+        }
+
         const userMsg = input;
         setInput('');
         setIsProcessing(true);
-
-        // Optimistic update handled by Engine or here? 
-        // Engine adds messages to store.
-
         await OuroborosEngine.getInstance().runOracle(userMsg, oracleChatHistory);
+        setIsProcessing(false);
+    };
+
+    const handleGenerateVibes = async (seed: string) => {
+        setIsProcessing(true);
+        setInput('');
+
+        // V2.99: Shadow Contextualizer - Generate 3 distinct vibes
+        await OuroborosEngine.getInstance().generateShadowVibes(seed);
 
         setIsProcessing(false);
+    };
+
+    const handleVibeSelect = async (vibe: any) => {
+        setIsProcessing(true);
+
+        // V2.99: Deep Prompt Refinement
+        const refinedSpec = await OuroborosEngine.getInstance().refineDeepPrompt(documentContent || input || "My Project", vibe);
+
+        if (refinedSpec) {
+            // Format for Document Content
+            const formattedContent = `
+# ${refinedSpec["Project Name"] || "Untitled Project"}
+
+> **Vibe:** ${vibe.label}
+> **Core Objective:** ${refinedSpec["Core Objective"]}
+
+## Key Features
+${(refinedSpec["Key Features"] || []).map((f: string) => `- ${f}`).join('\n')}
+
+## Technical Constraints
+${(refinedSpec["Technical Constraints"] || []).map((c: string) => `- ${c}`).join('\n')}
+
+## Data Schema
+${refinedSpec["Data Schema"] || "TBD"}
+
+## Unknown Unknowns (Addressed)
+${(refinedSpec["Unknown Unknowns Identified"] || []).map((u: string) => `- ${u}`).join('\n')}
+            `;
+
+            setDocumentContent(formattedContent);
+            setPotentialConstitutions(null); // Clear vibes view
+
+            // Add a system welcome message
+            addOracleMessage({
+                role: 'oracle',
+                content: `I've drafted a technical specification based on the **${vibe.label}** approach. Review the document on the right. Shall we refine it further, or proceeded to the Factory Floor?`,
+                timestamp: Date.now()
+            });
+
+            // Make sure the oracle considers this context
+            useOuroborosStore.getState().setFusedContext({
+                originalRequest: seedRef.current,
+                interviewTranscript: [],
+                fusedSpec: refinedSpec
+            });
+        }
+
+        setIsProcessing(false);
+    };
+
+    // Keep track of the original seed for context
+    const seedRef = useRef("");
+    const onSeedSubmit = () => {
+        if (input.trim()) {
+            seedRef.current = input;
+            handleGenerateVibes(input);
+        }
     };
 
     const handleFusion = async () => {
@@ -65,16 +133,8 @@ ${(fusedData["Unknown Unknowns Identified"] || []).map((u: string) => `- ${u}`).
             `;
 
             setDocumentContent(formattedContent);
-            toggleOracle(false);
+            // Don't close oracle automatically, let them discuss
         }
-        setIsProcessing(false);
-        setIsProcessing(false);
-    };
-
-    const handleIgnite = async () => {
-        setIsProcessing(true);
-        const starterMsg = documentContent.trim() || "I have a new idea I'd like to explore. Please interview me to help clarify my vision.";
-        await OuroborosEngine.getInstance().initiateOracleInterview(starterMsg);
         setIsProcessing(false);
     };
 
@@ -103,78 +163,135 @@ ${(fusedData["Unknown Unknowns Identified"] || []).map((u: string) => `- ${u}`).
                 </div>
             </div>
 
-            {/* Messages */}
+            {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {oracleChatHistory.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-4 opacity-70">
-                        <Sparkles className="w-12 h-12 text-purple-500/50 animate-pulse" />
-                        <p className="text-sm text-center max-w-[200px] font-mono">
-                            The Oracle awaits your spark.
+
+                {/* STATE 1: Empty - Show Seed Input */}
+                {oracleChatHistory.length === 0 && !potentialConstitutions && (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-6 opacity-90 animate-fade-in">
+                        <div className="text-center space-y-2">
+                            <Sparkles className="w-12 h-12 text-purple-500 mx-auto animate-pulse" />
+                            <h3 className="text-xl font-bold text-white">Project Genesis</h3>
+                            <p className="text-sm max-w-xs mx-auto">
+                                Describe your idea in a single sentence. The Oracle will handle the rest.
+                            </p>
+                        </div>
+                        {/* Input is handled by the main input bar below, but we can instruct the user */}
+                        <div className="text-xs text-gray-500">
+                            👇 Type your idea below and hit Enter
+                        </div>
+                    </div>
+                )}
+
+                {/* STATE 2: Vibe Selection */}
+                {oracleChatHistory.length === 0 && potentialConstitutions && (
+                    <div className="space-y-4 animate-slide-up">
+                        <h3 className="text-center text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">
+                            Choose Your Path
+                        </h3>
+                        <p className="text-center text-xs text-gray-400 mb-4">
+                            The Oracle has foreseen 3 potential futures for "{seedRef.current}".
                         </p>
+
+                        <div className="grid grid-cols-1 gap-3">
+                            {potentialConstitutions.map((vibe) => (
+                                <div
+                                    key={vibe.id}
+                                    onClick={() => handleVibeSelect(vibe)}
+                                    className={`
+                                        cursor-pointer p-4 rounded-xl border border-gray-700 bg-gray-800/50 
+                                        hover:bg-gray-700 hover:border-purple-500 hover:shadow-lg hover:shadow-purple-500/20 
+                                        transition-all duration-200 group relative overflow-hidden
+                                        ${isProcessing ? 'opacity-50 pointer-events-none' : ''}
+                                    `}
+                                >
+                                    <div className="absolute top-0 right-0 p-2 opacity-50 text-xs font-mono uppercase border-l border-b border-gray-700 rounded-bl bg-gray-900">
+                                        {vibe.riskLevel}
+                                    </div>
+                                    <h4 className="font-bold text-white group-hover:text-purple-300 mb-1">{vibe.label}</h4>
+                                    <p className="text-xs text-gray-300 italic mb-2">"{vibe.preview}"</p>
+                                    <p className="text-xs text-gray-400 leading-relaxed mb-3">{vibe.description}</p>
+                                    <div className="flex flex-wrap gap-1">
+                                        {vibe.techStackHint.slice(0, 3).map((tech, i) => (
+                                            <span key={i} className="text-[10px] px-1.5 py-0.5 bg-gray-900 rounded text-gray-500 border border-gray-700">
+                                                {tech}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                         <button
-                            onClick={handleIgnite}
-                            disabled={isProcessing}
-                            className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-full font-bold text-xs transition-all shadow-lg hover:shadow-purple-500/20 flex items-center gap-2"
+                            onClick={() => setPotentialConstitutions(null)}
+                            className="w-full text-xs text-gray-500 hover:text-white mt-4 underline"
                         >
-                            <Sparkles className="w-3 h-3" />
-                            CONSULT THE ORACLE
+                            Back to Idea Input
                         </button>
                     </div>
-                ) : (
-                    <>
-                        {oracleChatHistory.map((msg, idx) => (
-                            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-[80%] p-3 rounded-lg text-sm ${msg.role === 'user'
-                                    ? 'bg-blue-600 text-white rounded-br-none'
-                                    : 'bg-gray-700 text-gray-200 rounded-bl-none border border-purple-500/20'
-                                    }`}>
-                                    {msg.content}
-                                </div>
-                            </div>
-                        ))}
-                        <div ref={messagesEndRef} />
-                    </>
                 )}
+
+                {/* STATE 3: Chat History */}
+                {oracleChatHistory.map((msg, idx) => (
+                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${msg.role === 'user'
+                            ? 'bg-blue-600 text-white rounded-br-sm'
+                            : 'bg-gray-800 text-gray-200 rounded-bl-sm border border-gray-700'
+                            }`}>
+                            {msg.content}
+                        </div>
+                    </div>
+                ))}
+
+                {isProcessing && (
+                    <div className="flex justify-start">
+                        <div className="bg-gray-800 p-3 rounded-2xl rounded-bl-sm border border-gray-700 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-purple-400 animate-spin" />
+                            <span className="text-xs text-gray-400">Consulting the ether...</span>
+                        </div>
+                    </div>
+                )}
+
+                <div ref={messagesEndRef} />
             </div>
 
-            {/* Actions */}
+            {/* Input Area */}
             <div className="p-3 bg-gray-800 border-t border-gray-700">
                 {oracleChatHistory.length > 2 && (
                     <button
                         onClick={handleFusion}
                         disabled={isProcessing}
-                        className="w-full mb-3 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded font-bold text-xs hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 flex items-center justify-center gap-2"
+                        className="w-full mb-3 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg font-bold text-xs hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
                     >
                         <Sparkles className="w-3 h-3" />
                         {isProcessing ? 'Fusing Context...' : 'Perform Context Fusion'}
                     </button>
                 )}
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 relative">
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                        placeholder="Answer the Oracle..."
-                        className="flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-                        disabled={isProcessing}
+                        onKeyDown={(e) => e.key === 'Enter' && (!oracleChatHistory.length && !potentialConstitutions ? onSeedSubmit() : handleSend())}
+                        placeholder={potentialConstitutions ? "Select a vibe above..." : oracleChatHistory.length === 0 ? "Describe your idea..." : "Answer the Oracle..."}
+                        className="flex-1 bg-gray-900 border border-gray-600 rounded-full px-4 py-2 text-sm text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all placeholder:text-gray-600"
+                        disabled={isProcessing || (!!potentialConstitutions && oracleChatHistory.length === 0)}
                     />
                     <button
-                        onClick={handleSend}
+                        onClick={!oracleChatHistory.length && !potentialConstitutions ? onSeedSubmit : handleSend}
                         disabled={isProcessing || !input.trim()}
-                        className="p-2 bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50"
+                        className="p-2 bg-purple-600 text-white rounded-full hover:bg-purple-500 disabled:opacity-50 shadow-lg hover:shadow-purple-500/20 transition-all"
                     >
-                        <Send className="w-4 h-4" />
+                        {oracleChatHistory.length === 0 && !potentialConstitutions ? <Sparkles className="w-4 h-4" /> : <Send className="w-4 h-4" />}
                     </button>
+
+                    {/* Fallback Ignite Button (for getting out of stuck states) */}
                     {oracleChatHistory.length === 0 && (
                         <button
-                            onClick={handleIgnite}
-                            disabled={isProcessing}
-                            className="p-2 bg-purple-600 text-white rounded hover:bg-purple-500 disabled:opacity-50"
-                            title="Consult The Oracle"
+                            onClick={() => OuroborosEngine.getInstance().initiateOracleInterview("Let's brainstorm.")}
+                            className="absolute -top-10 right-0 text-xs text-gray-600 hover:text-gray-400 underline"
                         >
-                            <Sparkles className="w-4 h-4" />
+                            Skip to Chat
                         </button>
                     )}
                 </div>

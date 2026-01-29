@@ -139,7 +139,23 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
                         <button
                             onClick={() => {
                                 const updateGlobal = isGlobalRescue && !!rescueModel;
-                                OuroborosEngine.getInstance().retryNode(node.id, rescueModel || undefined, updateGlobal);
+                                // Reset node state to pending to allow re-execution
+                                OuroborosEngine.getInstance().updateNodeState(node.id, {
+                                    status: 'pending',
+                                    output: null,
+                                    distress: false,
+                                    failedModel: undefined,
+                                    lastHydraLog: undefined
+                                });
+                                // If a rescue model is selected, update it
+                                if (rescueModel) {
+                                    // Implementation depends on how we pass one-off model overrides.
+                                    // For now, retryNode is the correct method, but we need to ensure it handling status reset.
+                                    OuroborosEngine.getInstance().retryNode(node.id, rescueModel, updateGlobal);
+                                } else {
+                                    // Just a vanilla retry/reset
+                                    OuroborosEngine.getInstance().retryNode(node.id, undefined, updateGlobal);
+                                }
                                 onClose();
                             }}
                             className="w-full px-3 py-2 bg-amber-600 hover:bg-amber-500 text-black font-bold text-xs rounded shadow-lg hover:shadow-amber-500/20 transition-all uppercase tracking-wider"

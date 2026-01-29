@@ -63,18 +63,23 @@
 
 **Purpose:** Creates the foundational "Constitution" for a project by analyzing the user's goal and establishing constraints, domain context, and success criteria.
 
+**Protocol:** "Soft-Strict" (Think in Markdown -> Commit in YAML)
+
 | Location | Line ~336 | `generateConstitutionFromScratch()` |
 |----------|-----------|-------------------------------------|
 | **What it does** | Generates a project Constitution when no template is found in the library |
 | **Inputs** | User's goal, project domain |
-| **Outputs** | Constitution with constraints, domain info, and forbidden patterns |
+| **Outputs** | YAML-formatted Constitution with constraints, domain info, and tech stack |
+| **Thinking Phase** | Analyzes the user's request in Markdown before generating YAML |
 | **When to modify** | If constitutions are too restrictive, too permissive, or missing key constraints for your use case |
 | **Temperature** | 0.5 (moderate creativity) |
 
-| Location | Line ~424 | `evolveConstitutionForPhase()` |
-|----------|-----------|--------------------------------|
-| **What it does** | Evolves an existing constitution for a new phase of the project |
-| **When to modify** | If phase transitions need different rule adjustments |
+| Location | Line ~390 | `stepC_ConflictCheck()` |
+|----------|-----------|-------------------------|
+| **What it does** | Detects contradictions between User Prompt and Constitution |
+| **Outputs** | YAML array of conflicts |
+| **Thinking Phase** | Explains reasoning for potential conflicts in Markdown |
+| **When to modify** | To change conflict detection sensitivity |
 
 ---
 
@@ -124,6 +129,8 @@
 
 **Purpose:** Executes individual atomic tasks, generating architectural specifications.
 
+**Protocol:** "Soft-Strict" (Trace [MD] -> Delta [YAML] -> Artifact [MD])
+
 | Location | Line ~92-210 | `buildSpecialistPrompt()` |
 |----------|--------------|---------------------------|
 | **What it does** | Constructs the full prompt for a specialist worker |
@@ -132,12 +139,13 @@
 | - PERSONA | The specialist's assigned role |
 | - LIVING CONSTITUTION | Project constraints |
 | - ATOMIC INSTRUCTION | The specific task to complete |
-| - OUTPUT REQUIREMENTS | TRACE, BLACKBOARD DELTA, ARTIFACT structure |
+| - OUTPUT REQUIREMENTS | 1. TRACE (Markdown reasoning)<br>2. BLACKBOARD DELTA (YAML updates)<br>3. ARTIFACT (Final Deliverable) |
 | **When to modify** |
 | - Add/remove output sections |
 | - Change the no-code directive strength |
 | - Add new output formats |
 | **Key Directive** | 🔴 NOT A CODING AGENT - generates specifications, not code |
+| **Note** | Removed "Client-Side Only" constraint to allow for versatile architectures (e.g. backend/DB) |
 
 ---
 
@@ -145,34 +153,42 @@
 
 ### 4. Saboteur (Antagonist) - `engine/saboteur.ts`
 
-**Purpose:** Critiques and challenges specialist outputs to ensure quality.
+**Purpose:** "The Red Team" - Identifies gaps, missing requirements, and logic holes in the plan.
 
-| Location | Line ~225 | `runAntagonistCritique()` |
+**Protocol:** "Soft-Strict" (Think in Markdown -> Commit in YAML)
+
+| Location | Line ~169 | `runLLMSaboteur()` |
+|----------|-----------|--------------------|
+| **What it does** | Analyzes the task list for missing elements (Gaps) |
+| **Inputs** | Proposed task list, user goal, constitution |
+| **Outputs** | YAML array of `IdentifiedGap` objects |
+| **Thinking Phase** | "Think like an attacker" in Markdown to list potential weaknesses |
+| **When to modify** | To change gap detection categories or severity |
+| **Temperature** | 0.7 (high for adversarial creativity) |
+
+| Location | Line ~382 | `generateMissingBricks()` |
 |----------|-----------|---------------------------|
-| **What it does** | Provides adversarial critique of an artifact |
-| **Inputs** | Specialist output, task context |
-| **Outputs** | Critique score, issues found, improvement suggestions |
-| **When to modify** | To make critiques more/less harsh, focus on specific quality aspects |
-| **Temperature** | 0.7 (higher for creative criticism) |
-
-| Location | Line ~426 | `runSelfCritique()` |
-|----------|-----------|---------------------|
-| **What it does** | Self-reflection mode for the saboteur to improve its own critiques |
-| **When to modify** | To change meta-critique behavior |
+| **What it does** | Generates concrete tasks ("Bricks") to fill identified gaps |
+| **Outputs** | YAML array of `MissingBrick` objects |
+| **When to modify** | To change how repair tasks are structured |
 
 ---
 
 ### 5. Antagonist Mirror (Tribunal) - `engine/antagonist-mirror.ts`
 
-**Purpose:** Multi-judge tribunal that scores and validates specialist outputs.
+**Purpose:** "The Hostile Auditor" - A 1-on-1 Duel utilizing the Habeas Corpus Rule to validate artifacts.
 
-| Location | Line ~240 | `runTribunal()` |
-|----------|-----------|-----------------|
-| **What it does** | Creates multiple independent judges to score an artifact |
+**Protocol:** "Soft-Strict" (Habeas Corpus Analysis [MD] -> Verdict [YAML])
+
+| Location | Line ~239 | `audit()` / `conductDuel()` |
+|----------|-----------|-----------------------------|
+| **What it does** | Conducts a hostile review of an artifact against the Constitution |
+| **The Rule** | **Habeas Corpus:** Cannot reject without citing specific evidence (quotes) |
 | **Inputs** | Artifact, task instruction, constitution |
-| **Outputs** | Tribunal verdict with scores from each judge |
-| **When to modify** | To change scoring criteria, number of judges, or consensus thresholds |
-| **Temperature** | Varies per judge (0.3, 0.5, 0.7 for diversity) |
+| **Outputs** | YAML Verdict (`pass` | `fail`) with `evidence` array |
+| **Thinking Phase** | "THINK (Markdown)" - Conduct hostile review and cite evidence |
+| **When to modify** | To change the strictness of the "Habeas Corpus" rule or evidence requirements |
+| **Temperature** | 0.3 (Determinisic auditing) |
 
 ---
 
@@ -180,23 +196,22 @@
 
 **Purpose:** Iterative self-improvement loop for artifacts that fail quality gates.
 
-| Role                | Prompt Function | Purpose |
-|---------------------|-----------------|---------|
-| **Self-Critique**   | `buildCritiquePrompt()` (Line ~202) | Asks model to find 3 flaws in its own work |
-| **Fast Repair**     | `buildRepairPrompt()` (Line ~263) | Asks model to fix specific flaws without changing other parts |
+**Protocol:** "Soft-Strict" (Critique [YAML] -> Repair [MD])
+
+| Role | Prompt Function | Purpose |
+|------|-----------------|---------|
+| **Critique** | `buildCritiquePrompt()` (Line ~202) | Asks model to return flaws in YAML format |
+| **Repair** | `buildRepairPrompt()` (Line ~263) | Asks model to fix specific flaws using the critique |
 
 | Location | Line ~165 | `runReflexionCycle()` |
 |----------|-----------|----------------------|
 | **What it does** | Orchestrates the critique-then-repair loop |
-| **Inputs** | Original artifact, atomic instruction |
-| **Outputs** | Improved artifact, convergence status |
-| **When to modify** | To change the loop logic or thresholds |
+| **Protocol** | Critique output is parsed as YAML to identify severity and fixes |
 | **Temperature** | 0.3 (Critique) / 0.5 (Repair) |
 
-| Location | Line ~187 | `generateImprovementPlan()` |
+| Location | Line ~130 | `reflect()` |
 |----------|-----------|---------------------------|
-| **What it does** | Creates a structured plan for addressing critique points |
-| **When to modify** | To change the improvement planning strategy |
+| **What it does** | Entry point for the reflection cycle |
 
 ---
 
