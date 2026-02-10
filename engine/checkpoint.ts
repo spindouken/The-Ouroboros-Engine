@@ -7,6 +7,12 @@
 // 
 // Reference: V2.99_Checkpoint_Resume_Implementation_Plan.md
 // ============================================================================
+// █ ANCHOR 3: CHECKPOINT MANAGER (Time Machine)
+// 1. Session Phases (Finite State Machine)
+// 2. Metadata Structure
+// 3. Non-blocking Save (Microtask)
+// 4. Auto-Resume Detection
+// ============================================================================
 
 import { db } from '../db/ouroborosDB';
 import { useOuroborosStore } from '../store/ouroborosStore';
@@ -21,6 +27,7 @@ type PartialProjectData = Record<string, any>;
 // Each phase is a checkpoint where state can be saved and restored.
 
 export enum SessionPhase {
+    // █ ANCHOR 3.1: Finite State Machine (Phases)
     IDLE = 'idle',                           // Not started
     GENESIS_STARTED = 'genesis_started',     // Genesis Protocol in progress
     GENESIS_COMPLETE = 'genesis_complete',   // Constitution ready
@@ -40,6 +47,7 @@ export enum SessionPhase {
 // Metadata stored with each checkpoint for progress tracking and recovery.
 
 export interface CheckpointMeta {
+    // █ ANCHOR 3.2: Checkpoint Metadata
     phase: SessionPhase;
     timestamp: number;
     checkpointVersion: string;  // Schema version for future migrations
@@ -301,6 +309,7 @@ export class CheckpointManager {
         data: PartialProjectData,
         description?: string
     ): Promise<void> {
+        // █ ANCHOR 3.3: Non-blocking Save Mechanism (queueMicrotask)
         if (!this.autoSaveEnabled) {
             console.log(`[Checkpoint] Auto-save disabled, skipping: ${phase}`);
             return;
@@ -515,6 +524,7 @@ export class CheckpointManager {
  * Returns the session info if resumable, null otherwise.
  */
 export async function detectResumableSession(): Promise<{
+    // █ ANCHOR 3.4: Auto-Resume Detection
     sessionId: string;
     phase: SessionPhase;
     description: string;

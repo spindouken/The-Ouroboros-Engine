@@ -11,6 +11,11 @@
  * 
  * @module engine/saboteur
  * @version V2.99
+ * 
+ * █ ANCHOR 5a: THE SABOTEUR (Red Team)
+ * 1. The Gap Interface
+ * 2. LLM Stress Test (Phase 1)
+ * 3. Domain Checklist (Phase 2)
  */
 
 import { extractWithPreference } from '../utils/safe-json';
@@ -21,6 +26,7 @@ import { Constitution } from './genesis-protocol';
  * Gap identified by the Saboteur
  */
 export interface IdentifiedGap {
+    // █ ANCHOR 5.1: Defining a "Gap"
     id: string;
     severity: 'critical' | 'major' | 'minor';
     category: 'missing_requirement' | 'logic_gap' | 'security_hole' | 'edge_case' | 'dependency_missing' | 'scope_creep';
@@ -175,6 +181,7 @@ export class Saboteur {
         constitution: Constitution | null,
         userGoal: string
     ): Promise<IdentifiedGap[]> {
+        // █ ANCHOR 5.2: Phase 1 - The Red Team Agent
         const taskList = tasks.map((t, i) => `${i + 1}. [${t.id}] ${t.title}: ${t.instruction}`).join('\n');
         const constraintContext = constitution
             ? `Constraints: ${constitution.constraints.map(c => c.description).join(', ')}`
@@ -258,6 +265,7 @@ DO NOT make up fake gaps - only report REAL missing pieces.
         tasks: AtomicTask[],
         constitution: Constitution | null
     ): IdentifiedGap[] {
+        // █ ANCHOR 5.3: Phase 2 - Domain Knowledge Check
         const gaps: IdentifiedGap[] = [];
         const domain = constitution?.domain?.toLowerCase() || 'general';
 

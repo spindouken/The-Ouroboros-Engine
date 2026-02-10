@@ -21,6 +21,11 @@
  *    - Antagonist actively tries to find flaws
  *    - No consensus-seeking behavior
  *    - Evidence-based rejection only
+ * 
+ * █ ANCHOR 5b: ANTAGONIST MIRROR (The Auditor)
+ * 1. Evidence Structure
+ * 2. The Duel Protocol
+ * 3. The Habeas Corpus Rule
  */
 
 import { LLMResponse } from './UnifiedLLMClient';
@@ -33,6 +38,7 @@ import { extractWithPreference } from '../utils/safe-json';
 export type AntagonistVerdict = 'pass' | 'fail';
 
 export interface EvidenceItem {
+    // █ ANCHOR 5.5: Evidence Structure
     /** Type of evidence: quote from constitution or quote from artifact */
     type: 'constitution_quote' | 'artifact_quote' | 'logical_contradiction';
 
@@ -265,6 +271,7 @@ export class AntagonistMirror {
         constitution: string,
         atomicInstruction: string
     ): string {
+        // █ ANCHOR 5.4: The Habeas Corpus Rule
         // LITE MODE: Simplified Specification Auditor
         if (this.config.isLiteMode) {
             return `YOU ARE THE ANTAGONIST AUDITOR (LITE MODE).

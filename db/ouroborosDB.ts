@@ -128,6 +128,7 @@ export interface DBProject {
     };
 
     // --- V2.99 State (Pragmatic Brick Factory) ---
+    // █ ANCHOR 2.6: The Living State (Stored in Project)
     prismAnalysis?: any; // Full Prism result: stepA, stepB, stepC, stepD
     livingConstitution?: any; // Domain, techStack, constraints, decisions, warnings
     verifiedBricks?: any[]; // All verified brick artifacts
@@ -191,6 +192,7 @@ export interface DBProjectStack {
     createdAt: number;
 }
 
+// █ ANCHOR 2.5: The Persistence Layer (Dexie.js / IndexedDB)
 export class OuroborosDB extends Dexie {
     nodes!: Table<DBNode>;
     edges!: Table<DBEdge>;

@@ -12,6 +12,12 @@
  * 
  * @module engine/genesis-protocol
  * @version V2.99
+ * 
+ * █ ANCHOR 0: THE GENESIS PROTOCOL
+ * 1. The Orchestrator (execute)
+ * 2. Step A: Library Scan (Vector DB)
+ * 3. Step B: Genesis Agent (Magic Mode)
+ * 4. Step C: Conflict Check (The Lawyer)
  */
 
 import { safeJsonParseObject, safeJsonParseArray, extractWithPreference } from '../utils/safe-json';
@@ -139,6 +145,7 @@ export class GenesisProtocol {
      * @param selectedStackId - Optional pre-selected stack ID from UI
      */
     async execute(userPrompt: string, selectedStackId?: string): Promise<GenesisResult> {
+        // █ ANCHOR 0.1: The Genesis Orchestrator
         console.log('[Genesis] Starting Protocol...');
 
         const result: GenesisResult = {
@@ -206,6 +213,7 @@ export class GenesisProtocol {
      * Query the "Golden Seed" Vector DB for pre-validated templates
      */
     private async stepA_LibraryScan(userPrompt: string, selectedStackId?: string): Promise<StepAResult> {
+        // █ ANCHOR 0.2: Step A - Library Scan
         const result: StepAResult = {
             templateFound: false,
             matchedSkills: [],
@@ -289,6 +297,7 @@ export class GenesisProtocol {
      * Spawn high-reasoning Genesis Agent to generate custom Constitution
      */
     private async stepB_GenesisFallback(userPrompt: string, existingSkills: DBSkill[]): Promise<StepBResult> {
+        // █ ANCHOR 0.3: Step B - Genesis Agent (Magic Mode)
         const startTime = Date.now();
         const result: StepBResult = {
             genesisAgentUsed: true,
@@ -300,6 +309,7 @@ export class GenesisProtocol {
                 ? `\n\nAvailable Skills from Library:\n${existingSkills.map(s => `- ${s.name}: ${s.content.substring(0, 200)}...`).join('\n')}`
                 : '';
 
+            // █ ANCHOR 0.4: Soft-Strict Protocol (Think in Markdown, Commit in YAML)
             const prompt = `
 You are the GENESIS AGENT - a high-reasoning AI that establishes project foundations.
 
@@ -436,6 +446,7 @@ IMPORTANT: Tailor the Tech Stack to the precise needs of the User Request.
      * Analyze User's Prompt vs Template for contradictions
      */
     private async stepC_ConflictCheck(userPrompt: string, constitution: Partial<Constitution>): Promise<StepCResult> {
+        // █ ANCHOR 0.5: Step C - Conflict Check (The Lawyer)
         const result: StepCResult = {
             conflictsDetected: false,
             conflicts: [],

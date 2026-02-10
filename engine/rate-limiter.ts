@@ -1,9 +1,15 @@
 /**
  * Rate Limiter for API calls
  * Tracks requests per minute (RPM) and requests per day (RPD)
+ * 
+ * █ ANCHOR 4: RATE LIMITER (The Gatekeeper)
+ * 1. Config Interface
+ * 2. Token Bucket Logic
+ * 3. Intelligent Backoff
  */
 
 export interface RateLimitConfig {
+    // █ ANCHOR 4.1: Token Bucket Configuration
     rpm: number; // Requests per minute
     rpd: number; // Requests per day
     enabled: boolean; // Whether rate limiting is enabled
@@ -47,6 +53,7 @@ export class RateLimiter {
      * Check if we can make a request
      */
     canMakeRequest(): boolean {
+        // █ ANCHOR 4.2: RPM/RPD Checks
         if (!this.config.enabled) {
             return true;
         }
@@ -129,6 +136,7 @@ export class RateLimiter {
      * Wait until a request can be made
      */
     async waitForSlot(): Promise<void> {
+        // █ ANCHOR 4.3: Intelligent Backoff
         if (!this.config.enabled) {
             return;
         }

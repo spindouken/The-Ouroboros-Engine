@@ -13,6 +13,12 @@
  * 
  * This ensures that all agents operate on a consistent, evolving state
  * rather than each having their own isolated context.
+ * 
+ * █ ANCHOR 2: BLACKBOARD DELTA (The Living Constitution)
+ * 1. Global Context (State)
+ * 2. Merge Logic (Decisions)
+ * 3. Conflict Detection (Heuristic)
+ * 4. Delta Parsing (Safe)
  */
 
 import { BlackboardDelta } from './specialist';
@@ -23,6 +29,7 @@ import { safeYamlParse } from '../utils/safe-json';
 // ============================================================================
 
 export interface GlobalContext {
+    // █ ANCHOR 2.1: The Global Context (State)
     /** The original user requirements */
     originalRequirements: string;
 
@@ -149,6 +156,7 @@ export class BlackboardDeltaManager {
      * @returns DeltaMergeResult with details of the merge
      */
     mergeDelta(brick: VerifiedBrick): DeltaMergeResult {
+        // █ ANCHOR 2.2: Context Merging Logic
         const delta = brick.delta;
         const additions = {
             constraints: [] as string[],
@@ -315,6 +323,7 @@ export class BlackboardDeltaManager {
      * Returns the conflicting constraint if found, null otherwise
      */
     private detectConflict(newConstraint: string, existing: string[]): string | null {
+        // █ ANCHOR 2.3: Conflict Detection (Heuristic)
         const newLower = newConstraint.toLowerCase();
 
         // Simple heuristics for conflict detection
@@ -436,6 +445,7 @@ export class BlackboardDeltaManager {
  * V2.99 Soft-Strict Protocol: YAML-first, JSON-fallback, structured text last resort
  */
 export function parseBlackboardDelta(rawResponse: string): BlackboardDelta {
+    // █ ANCHOR 2.4: Delta Parsing (Safe Extraction)
     const defaultDelta: BlackboardDelta = {
         newConstraints: [],
         decisions: [],

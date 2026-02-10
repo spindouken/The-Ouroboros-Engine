@@ -11,6 +11,11 @@
  * 
  * @module prism-controller
  * @version V2.99
+ * 
+ * █ ANCHOR 1: THE PRISM CONTROLLER
+ * 1. Atomic Task Definition
+ * 2. The Pipeline (A -> B -> C -> D)
+ * 3. Atomicity Validation (Regex)
  */
 
 import { AgentConfig, MicroTask, NodeStatus } from '../types';
@@ -27,6 +32,7 @@ export interface PrismConfig {
  * Atomic Task - A single-step question/task that is fully decomposed
  */
 export interface AtomicTask {
+    // █ ANCHOR 1.1: The Atomic Task Definition
     id: string;
     title: string;
     instruction: string;
@@ -140,6 +146,7 @@ export class PrismController {
         model: string,
         config: PrismConfig = { maxAtomicTasks: 10, maxCouncilSize: 5, maxDecompositionPasses: 3 }
     ): Promise<PrismAnalysisResult> {
+        // █ ANCHOR 1.2: The Prism Pipeline (A->B->C->D)
         console.log('[Prism] Starting Four-Step Analysis...');
 
         const result: PrismAnalysisResult = {
@@ -462,7 +469,7 @@ Return JSON:
             ? `**TASK LIMIT:** Generate up to ${maxTasks} tasks. Do NOT exceed ${maxTasks} unless absolutely critical.`
             : `**DO NOT limit the number of tasks.** Generate as many as required to fully satisfy the goal.`;
 
-        // V2.99 Soft-Strict Protocol: "Think then Commit" pattern
+        // STOP 1.4:V2.99 Soft-Strict Protocol: "Think then Commit" pattern
         // Agent reasons in Markdown, then commits structured data in YAML
         const prompt = `# PRISM ATOMIZER PROTOCOL (V2.99 Soft-Strict) ${depthIndicator}
 
@@ -714,6 +721,7 @@ Begin your response with your THINKING, then end with the YAML commit block:`;
      * Validates that a task has a single primary action and clear deliverable
      */
     validateAtomicity(task: AtomicTask): AtomicityValidation {
+        // █ ANCHOR 1.3: Atomicity Validator (Regex Heuristics)
         const result: AtomicityValidation = {
             isAtomic: true,
             issues: []
