@@ -141,12 +141,12 @@ ${(fusedData["Unknown Unknowns Identified"] || []).map((u: string) => `- ${u}`).
     if (!isOracleActive) return null;
 
     return (
-        <div className="flex flex-col h-full bg-gray-900 border border-purple-500/30 rounded-lg overflow-hidden shadow-2xl relative">
+        <div className="flex flex-col h-full bg-zinc-950/90 backdrop-blur-xl border border-purple-500/20 rounded-lg overflow-hidden shadow-2xl relative">
             {/* Header */}
-            <div className="flex items-center justify-between p-3 bg-gray-800 border-b border-gray-700">
+            <div className="flex items-center justify-between p-3 bg-zinc-900/50 backdrop-blur-md border-b border-purple-900/30">
                 <div className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-purple-400" />
-                    <span className="font-bold text-gray-100">The Oracle</span>
+                    <span className="font-display font-bold text-gray-100 tracking-wide">The Oracle</span>
                 </div>
                 <div className="flex items-center gap-3">
                     <ClarityGauge score={clarityScore} />
@@ -199,16 +199,16 @@ ${(fusedData["Unknown Unknowns Identified"] || []).map((u: string) => `- ${u}`).
                                     key={vibe.id}
                                     onClick={() => handleVibeSelect(vibe)}
                                     className={`
-                                        cursor-pointer p-4 rounded-xl border border-gray-700 bg-gray-800/50 
-                                        hover:bg-gray-700 hover:border-purple-500 hover:shadow-lg hover:shadow-purple-500/20 
-                                        transition-all duration-200 group relative overflow-hidden
+                                        cursor-pointer p-4 rounded-xl border border-zinc-800 bg-zinc-900/40 
+                                        hover:bg-zinc-800/60 hover:border-purple-500 hover:shadow-[0_0_20px_rgba(168,85,247,0.15)] 
+                                        transition-all duration-300 group relative overflow-hidden
                                         ${isProcessing ? 'opacity-50 pointer-events-none' : ''}
                                     `}
                                 >
-                                    <div className="absolute top-0 right-0 p-2 opacity-50 text-xs font-mono uppercase border-l border-b border-gray-700 rounded-bl bg-gray-900">
+                                    <div className="absolute top-0 right-0 p-2 opacity-50 text-xs font-mono uppercase border-l border-b border-zinc-800 rounded-bl bg-zinc-950 text-purple-300">
                                         {vibe.riskLevel}
                                     </div>
-                                    <h4 className="font-bold text-white group-hover:text-purple-300 mb-1">{vibe.label}</h4>
+                                    <h4 className="font-display font-bold text-white group-hover:text-purple-300 mb-1 tracking-wide">{vibe.label}</h4>
                                     <p className="text-xs text-gray-300 italic mb-2">"{vibe.preview}"</p>
                                     <p className="text-xs text-gray-400 leading-relaxed mb-3">{vibe.description}</p>
                                     <div className="flex flex-wrap gap-1">
@@ -255,7 +255,7 @@ ${(fusedData["Unknown Unknowns Identified"] || []).map((u: string) => `- ${u}`).
             </div>
 
             {/* Input Area */}
-            <div className="p-3 bg-gray-800 border-t border-gray-700">
+            <div className="p-3 bg-zinc-900/50 backdrop-blur-md border-t border-purple-900/30">
                 {oracleChatHistory.length > 2 && (
                     <button
                         onClick={handleFusion}
@@ -274,7 +274,7 @@ ${(fusedData["Unknown Unknowns Identified"] || []).map((u: string) => `- ${u}`).
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && (!oracleChatHistory.length && !potentialConstitutions ? onSeedSubmit() : handleSend())}
                         placeholder={potentialConstitutions ? "Select a vibe above..." : oracleChatHistory.length === 0 ? "Describe your idea..." : "Answer the Oracle..."}
-                        className="flex-1 bg-gray-900 border border-gray-600 rounded-full px-4 py-2 text-sm text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all placeholder:text-gray-600"
+                        className="flex-1 bg-zinc-950/80 border border-zinc-700 rounded-full px-4 py-2 text-sm text-white focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all placeholder:text-zinc-600 font-sans"
                         disabled={isProcessing || (!!potentialConstitutions && oracleChatHistory.length === 0)}
                     />
                     <button

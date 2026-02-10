@@ -6,6 +6,11 @@
   <img src="https://img.shields.io/badge/IndexedDB-FF6F00?style=for-the-badge&logo=databricks&logoColor=white" alt="IndexedDB"/>
 </p>
 
+<p align="center">
+  <strong>Status: V2.99 (MVP) - Stable Release</strong><br/>
+  <em>Some features listed in the Atlas (V3.0) are currently in development. See <a href="#-roadmap--future-work">Roadmap</a>.</em>
+</p>
+
 <h1 align="center">♾️ The Ouroboros Engine</h1>
 
 <p align="center">
@@ -157,8 +162,7 @@ A multi-headed reliability layer ensuring 99.9% uptime through intelligent failo
 ### 🔮 **The Oracle** — Proactive Consultant
 **Step 1 of User Experience.** The contextual interviewer that conducts branching conversations to eliminate ambiguity.
 
-- **Branching Interviews** — Dynamically follows lines of inquiry based on user answers
-- **Unknown Unknowns** — Forces users to clarify ambiguity *before* burning tokens on generation
+- **Context Analysis** — Analyzes prompt for ambiguity
 - **Prompt Refinement** — Rewrites vague ideas into technical specifications
 
 ### 🌱 **The Genesis Protocol** — Constitution & Template Bootstrap
@@ -245,26 +249,21 @@ A multi-headed reliability layer ensuring 99.9% uptime through intelligent failo
   - Must provide a **Direct Quote** from Constitution or Artifact demonstrating contradiction
 - **Repair Loop:** Failed bricks get ONE focused repair attempt before escalation
 
-### 🪄 **The Paraphraser** — Deadlock Breaking
-**Step 8b (Conditional).** When Antagonist and Specialist get stuck in "Reject → Repair → Reject" loops:
 
-- **Trigger:** Deadlock detection
-- **Action:** Spawns Paraphraser Agent to rewrite instruction with increased "Noise" (Decorrelation)
-- **Goal:** Shake model out of its local minima
 
 ### 📜 **The Living Constitution** — Dynamic System Axioms
 **Ongoing.** A contractually binding document that evolves with each verified decision.
 
 - **Blackboard Delta** — When a brick is verified, its delta merges into Global Context
 - **Constitutional Drift Prevention** — Agent B (Step 10) explicitly sees decisions from Agent A (Step 5)
-- **Real-Time Delta Stream** — Side-panel showing constitution updates as they occur
+- **Constitutional Drift Prevention** — Agent B (Step 10) explicitly sees decisions from Agent A (Step 5)
 
 ### **The Masonry** — State & Persistence Layer
 **Ongoing.** Built on Dexie.js (IndexedDB), providing enterprise-grade checkpointing.
 
 - **Technology:** Dexie.js (IndexedDB wrapper) + Zustand for runtime state
 - **Resume Capability** — Factory resumes exactly at the last verified brick
-- **Session Codex (Rollback)** — Versioned history enabling time-travel debugging
+
 - **The Brick Wall:** Visualizes the DAG of Atomic Bricks (🟢 Verified, 🟡 Auditing, 🔴 Failed)
 
 ---
@@ -289,24 +288,7 @@ A multi-headed reliability layer ensuring 99.9% uptime through intelligent failo
 
 ---
 
-### **PHASE 5: MEMORY & LEARNING**
-*At session end and between runs, the system learns.*
 
-### 📚 **The Librarian** — Skill Extraction & Memory
-At session end, successful patterns are extracted and vector-embedded.
-
-- **Golden Standards Seeding** — Pre-loads `seed_skills.json` for Senior-level competence from Day 1
-- **Pre-Flight Check** — Queries `db.skills` and injects "Top 3 Related Solved Problems"
-- **Anti-Pattern Library** — Rejected bricks become "Negative Constraints" in future prompts
-
-### 🔍 **The Project Insight Layer** — Mid-Term Memory
-Every 5-10 Bricks, a background process runs a "Reflection Pass."
-
-- **Synthesizes:** High-level observations (e.g., "We are avoiding 3rd party UI libraries")
-- **Output:** `project_insights.md`
-- **Injection:** Fed into every Specialist's context to prevent style drift
-
----
 
 ## 🏗️ Architecture Overview
 
@@ -339,7 +321,16 @@ The-Ouroboros-Engine/
 │   ├── saboteur.ts                # Scope stress tester
 │   ├── lossless-compiler.ts       # Final assembly (Alchemist)
 │   ├── security-patcher.ts        # Security addendum generator
-│   └── memory-system.ts           # Agent memory & learning
+│   ├── prism-controller.ts        # 🔮 The Prism - Decomposition
+│   ├── antagonist-mirror.ts       # Adversarial auditor
+│   ├── saboteur.ts                # Scope stress tester
+│   ├── blackboard-surveyor.ts     # Zero-cost fast gate
+│   ├── blackboard-delta.ts        # Living constitution updates
+│   ├── agent-memory-manager.ts    # 💭 Memory persistence
+│   ├── knowledge-graph.ts         # 🧠 Blackboard architecture
+│   ├── red-flag-validator.ts      # 🚩 Red-flagging engine
+│   ├── rate-limiter.ts            # ⏱️ Quota-aware scheduling
+│   └── micro-agent-decomposer.ts  # 🔬 MDAP decomposition
 │
 ├── components/                    # 🎨 React UI Components
 │   ├── ControlPanel.tsx           # Main control interface
@@ -369,13 +360,6 @@ The-Ouroboros-Engine/
 ├── hooks/                         # 🪝 Custom Hooks
 │   └── useSoundEffects.ts         # Audio feedback
 │
-├── prism-controller.ts            # 🔮 The Prism - Decomposition
-├── multi-round-voting.ts          # ⚖️ Tribunal voting system
-├── red-flag-validator.ts          # 🚩 Red-flagging engine
-├── knowledge-graph.ts             # 🧠 Blackboard architecture
-├── agent-memory-manager.ts        # 💭 Memory persistence
-├── rate-limiter.ts                # ⏱️ Quota-aware scheduling
-├── micro-agent-decomposer.ts      # 🔬 MDAP decomposition
 ├── types.ts                       # 📝 TypeScript definitions
 └── constants.ts                   # ⚙️ Configuration & personas
 ```
@@ -652,6 +636,10 @@ This prevents arbitrary rejection and forces evidence-based auditing.
 
 ## 🔮 Roadmap & Future Work
 
+- [ ] **Smart Oracle** — Branching Interviews & Unknown Unknowns discovery
+- [ ] **Deadlock Breaking** — Paraphraser Agent for loop resolution
+- [ ] **Advanced Memory** — The Librarian, Golden Seeds, and Project Insight Layer
+- [ ] **State Rollback** — Full "Time-Travel" session restoration
 - [ ] **Server-Side Proxy** — Move API keys to secure backend
 - [ ] **Neo4j Integration** — Graph database for production knowledge graph
 - [ ] **Worker Pool Expansion** — Parallel brick generation with job queue

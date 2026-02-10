@@ -5,7 +5,9 @@ import clsx from 'clsx';
 import { Activity, Brain, Shield, Zap, Eye, Hexagon } from 'lucide-react';
 
 const AgentNode = ({ data, selected }: NodeProps) => {
-    const isProcessing = data.status === 'running' || data.status === 'thinking' || data.status === 'synthesizing';
+    // STRICT Activity Check: 'running' is removed to prevent passive glow.
+    // Only animate if actively thinking or performing work.
+    const isProcessing = ['running', 'planning', 'reflexion', 'synthesizing', 'auditing', 'critiquing', 'verifying', 'compiling', 'thinking'].includes(data.status);
     const isComplete = data.status === 'complete';
     const isError = data.status === 'error';
 
@@ -30,13 +32,18 @@ const AgentNode = ({ data, selected }: NodeProps) => {
                 "relative w-[240px] rounded-lg border backdrop-blur-md transition-all duration-300",
                 "flex flex-col overflow-hidden shadow-xl",
                 selected ? "border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.3)]" : "border-emerald-900/50 hover:border-emerald-500/50",
-                isProcessing ? "bg-emerald-950/80" : "bg-[#0a0a0a]/90",
+                isProcessing ? "bg-emerald-950/90 border-emerald-400/50" : "bg-[#0a0a0a]/90",
                 isError && "border-red-500/50 bg-red-950/20"
             )}
         >
             {/* Glowing Border Effect for Processing */}
             {isProcessing && (
-                <div className="absolute inset-0 rounded-lg animate-pulse border border-emerald-500/30 shadow-[inset_0_0_10px_rgba(16,185,129,0.2)]" />
+                <>
+                    <div className="absolute -inset-[8px] rounded-xl animate-pulse-ring border-2 border-emerald-400/30 z-[-2]" />
+                    <div className="absolute -inset-[3px] rounded-lg bg-emerald-500/10 shadow-[0_0_40px_rgba(52,211,153,0.6)] z-[-1]" />
+                    {/* Bright White Halo - No Blending for Max Visibility */}
+                    <div className="absolute -inset-[1px] rounded-lg border-2 border-white shadow-[0_0_15px_rgba(255,255,255,0.9)] z-10 pointer-events-none" />
+                </>
             )}
 
             {/* Header */}

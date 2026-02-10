@@ -13,7 +13,7 @@ import type {
   RedFlagSeverity,
   ValidationResult,
   RedFlagValidator
-} from './types';
+} from '../types';
 
 /**
  * Red-Flag Validation Rules

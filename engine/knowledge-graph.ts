@@ -1,5 +1,5 @@
-import { db } from './db/ouroborosDB';
-import { KnowledgeGraph, KnowledgeNode, KnowledgeEdge, KnowledgeGraphLayer } from './types';
+import { db } from '../db/ouroborosDB';
+import { KnowledgeGraph, KnowledgeNode, KnowledgeEdge, KnowledgeGraphLayer } from '../types';
 
 export class KnowledgeGraphManager {
 

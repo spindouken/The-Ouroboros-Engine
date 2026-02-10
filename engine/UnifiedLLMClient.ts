@@ -277,7 +277,21 @@ export class UnifiedLLMClient {
             }
 
             const data = await response.json();
-            const content = data.choices?.[0]?.message?.content || "";
+            let content = data.choices?.[0]?.message?.content || "";
+
+            // CENTRIFUGE: For small models, aggressively clean the response
+            // Even with json_object mode, small models can prepend/append noise
+            if (params.model === 'local-custom-small' && content) {
+                const extracted = Leviathan.centrifuge(content);
+                if (extracted.success && extracted.data) {
+                    // Re-stringify the extracted data to ensure clean output
+                    content = JSON.stringify(extracted.data);
+                    console.log(`[Local:Centrifuge] Cleaned response (${extracted.extractionMethod}): ${extracted.rawLength} -> ${extracted.cleanedLength} chars`);
+                } else if (!Leviathan.isValidJson(content)) {
+                    // If extraction failed and content isn't valid JSON, log warning
+                    console.warn(`[Local:Centrifuge] Failed to extract JSON from small model response. Passing raw.`);
+                }
+            }
 
             const usage = data.usage ? {
                 promptTokens: data.usage.prompt_tokens || 0,

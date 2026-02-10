@@ -41,7 +41,11 @@ export type NodeType =
   | 'security_patcher'  // Security Patcher node
   | 'lossless_compiler'; // Explicit Lossless Compiler node
 
+
 export type AppMode = 'refine' | 'plan';
+
+export type VisualProfile = 'MINIMAL' | 'CYBERPUNK' | 'LABORATORY';
+
 
 // --- EXTENDED NODE MODEL (Requirements 1.1, 1.2) ---
 
@@ -283,6 +287,8 @@ export interface VotingState {
 // --- EXTENDED APP SETTINGS ---
 
 export interface AppSettings {
+  visualProfile?: VisualProfile; // V3.0 Skin Engine
+  reduceMotion?: boolean;        // Accessibility
   model: string;
   concurrency: number;
   rpm: number; // Requests per minute
@@ -402,6 +408,15 @@ export interface PotentialConstitution {
   preview: string; // A short snippet or "vibe" description
   techStackHint: string[];
   riskLevel: 'safe' | 'balanced' | 'experimental';
+}
+
+// --- HUD ALERTS (V3.0) ---
+export interface Alert {
+  id: string;
+  type: 'success' | 'error' | 'info';
+  title: string;
+  message?: string;
+  timestamp: number;
 }
 
 // --- LOG ENTRY ---

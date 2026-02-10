@@ -14,7 +14,7 @@
  */
 
 import { extractWithPreference } from '../utils/safe-json';
-import { AtomicTask, CouncilProposal } from '../prism-controller';
+import { AtomicTask, CouncilProposal } from './prism-controller';
 import { Constitution } from './genesis-protocol';
 
 /**

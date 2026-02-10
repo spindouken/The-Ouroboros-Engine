@@ -188,7 +188,7 @@ export class LosslessCompiler {
         lines.push(`**Verified Bricks:** ${metadata.brickCount}`);
 
         const cleanTechStack = (metadata.techStack || [])
-            .filter(t => t && t !== 'None' && t !== 'null' && t.toLowerCase() !== 'unknown')
+            .filter(t => typeof t === 'string' && t && t !== 'None' && t !== 'null' && t.toLowerCase() !== 'unknown')
             .filter((item, index, self) => self.indexOf(item) === index); // Dedupe
 
         lines.push(`**Tech Stack:** ${cleanTechStack.length > 0 ? cleanTechStack.join(', ') : 'None'}`);
@@ -313,7 +313,7 @@ export class LosslessCompiler {
         lines.push(`**Verified Bricks:** ${metadata.brickCount}`);
 
         const cleanTechStack = (metadata.techStack || [])
-            .filter(t => t && t !== 'None' && t !== 'null' && t.toLowerCase() !== 'unknown')
+            .filter(t => typeof t === 'string' && t && t !== 'None' && t !== 'null' && t.toLowerCase() !== 'unknown')
             .filter((item, index, self) => self.indexOf(item) === index); // Dedupe
 
         lines.push(`**Tech Stack:** ${cleanTechStack.length > 0 ? cleanTechStack.join(', ') : 'Not Specified'}`);

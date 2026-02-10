@@ -11,7 +11,7 @@ import type {
   MicroTask,
   MicroAgentDecomposer,
   NodeStatus
-} from './types';
+} from '../types';
 
 export class MicroAgentDecomposerImpl implements MicroAgentDecomposer {
 

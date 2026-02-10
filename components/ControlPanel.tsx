@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, RefreshCw, Flame, Workflow, CheckCircle, StopCircle, RotateCcw, Sparkles, Download, Play, Pause, Eye, Edit2, ChevronRight, Trash2, FileText, X, Plus, Save, FolderArchive } from 'lucide-react';
+import { Settings, RefreshCw, Flame, Workflow, CheckCircle, StopCircle, RotateCcw, Sparkles, Download, Play, Pause, Eye, Edit2, ChevronRight, Trash2, FileText, X, Plus, Save, FolderArchive, Wand2 } from 'lucide-react';
 import { AppMode, LogEntry } from '../types';
 import { DEPARTMENTS } from '../constants';
 import { useOuroborosStore } from '../store/ouroborosStore';
@@ -7,9 +7,12 @@ import { OuroborosEngine } from '../engine/OuroborosEngine';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import clsx from 'clsx';
+import { BioButton } from './ui/BioButton';
 
 import { useSoundEffects } from '../hooks/useSoundEffects';
 import { OracleChat } from './oracle/OracleChat';
+import { DeltaStream } from './DeltaStream';
+
 
 interface ControlPanelProps {
     appMode: AppMode;
@@ -20,8 +23,8 @@ interface ControlPanelProps {
 // --- TASK LIST VIEWER ---
 const TaskListViewer: React.FC<{ tasks: any[] }> = ({ tasks }) => {
     return (
-        <div className="flex-1 bg-[#050505] p-4 font-mono text-sm mb-4">
-            <h3 className="text-xs font-bold text-emerald-600 mb-4 uppercase tracking-widest border-b border-emerald-900/50 pb-2">
+        <div className="flex-1 bg-canvas/30 backdrop-blur-sm p-4 font-sans text-sm mb-4 rounded-lg border border-emerald-900/20 shadow-lg">
+            <h3 className="text-xs font-display font-bold text-emerald-500 mb-4 uppercase tracking-widest border-b border-emerald-900/50 pb-2">
                 Approved Directives ({tasks.reduce((acc, t) => acc + 1 + (t.children?.length || 0), 0)})
             </h3>
             <div className="space-y-4">
@@ -223,19 +226,19 @@ const CyberpunkPreview: React.FC<{ content: string }> = ({ content }) => {
     const lines = cleanContent.split('\n');
 
     return (
-        <div className="w-full bg-[#050505] p-4 font-mono text-sm whitespace-pre-wrap break-words">
+        <div className="w-full bg-black/40 backdrop-blur-sm p-5 font-sans text-sm whitespace-pre-wrap break-words rounded-lg border border-emerald-900/10 shadow-inner">
             {lines.map((line, idx) => {
                 // H1
                 if (line.startsWith('# ')) {
-                    return <h1 key={idx} className="text-xl font-bold text-emerald-400 mt-4 mb-2 border-b border-emerald-900/50 pb-1 tracking-widest uppercase shadow-[0_0_10px_rgba(52,211,153,0.1)]">{line.replace('# ', '')}</h1>;
+                    return <h1 key={idx} className="text-2xl font-display font-extrabold text-emerald-300 mt-6 mb-3 border-b border-emerald-900/50 pb-2 tracking-wide uppercase drop-shadow-[0_0_15px_rgba(52,211,153,0.4)]">{line.replace('# ', '')}</h1>;
                 }
                 // H2
                 if (line.startsWith('## ')) {
-                    return <h2 key={idx} className="text-lg font-bold text-emerald-500 mt-3 mb-1 pl-2 border-l-2 border-emerald-600">{line.replace('## ', '')}</h2>;
+                    return <h2 key={idx} className="text-lg font-display font-bold text-emerald-400 mt-4 mb-2 pl-3 border-l-4 border-emerald-500/80 bg-gradient-to-r from-emerald-900/20 to-transparent py-1">{line.replace('## ', '')}</h2>;
                 }
                 // H3
                 if (line.startsWith('### ')) {
-                    return <h3 key={idx} className="text-md font-bold text-emerald-600 mt-2 mb-1">{line.replace('### ', '')}</h3>;
+                    return <h3 key={idx} className="text-base font-display font-bold text-emerald-500 mt-3 mb-1 tracking-wide">{line.replace('### ', '')}</h3>;
                 }
                 // Checkbox (Unchecked)
                 if (line.trim().startsWith('- [ ]')) {
@@ -319,7 +322,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     } = useOuroborosStore();
 
     const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
-    const [prismViewTab, setPrismViewTab] = useState<'council' | 'constitution'>('council');
+    const [prismViewTab, setPrismViewTab] = useState<'council' | 'constitution' | 'telemetry'>('council');
     const [showOriginalPrompt, setShowOriginalPrompt] = useState(false);
     const isProcessing = status === 'thinking';
     const engine = OuroborosEngine.getInstance();
@@ -338,15 +341,15 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     };
 
     return (
-        <div className="h-full flex flex-col bg-[#020402]">
+        <div className="h-full flex flex-col bg-transparent">
             {/* HEADER */}
-            <div className="p-4 border-b border-emerald-900/30 flex flex-col gap-4 bg-[#050505]">
+            <div className="p-4 border-b border-emerald-900/30 flex flex-col gap-4 bg-black/20">
                 <div className="flex justify-between items-center">
                     <div className="flex items-center gap-5">
                         <img src="/Ouroboros.png" alt="Ouroboros Logo" className="w-20 h-20 object-contain" />
                         <div>
-                            <h1 className="font-bold text-emerald-100 tracking-wider text-xl">THE OUROBOROS ENGINE</h1>
-                            <div className="text-[10px] text-emerald-600 font-mono">v2.99 // PRAGMATIC BRICK FACTORY</div>
+                            <h1 className="font-display font-black text-emerald-100 tracking-wider text-2xl drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] bg-clip-text text-transparent bg-gradient-to-r from-emerald-100 to-emerald-400">THE OUROBOROS ENGINE</h1>
+                            <div className="text-[10px] text-emerald-500/80 font-mono tracking-[0.2em] uppercase">v3.0.0 // PRAGMATIC BRICK FACTORY</div>
                         </div>
                     </div>
                     <button
@@ -359,26 +362,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 </div>
 
                 <div className="flex gap-2">
-                    <button
-                        onClick={() => { playClick(); setAppMode('refine'); }}
-                        onMouseEnter={() => playHover()}
-                        className={clsx(
-                            "flex-1 py-1.5 text-xs font-bold rounded transition-colors",
-                            appMode === 'refine' ? "bg-emerald-900/50 text-emerald-400 border border-emerald-700" : "text-emerald-800 hover:text-emerald-600 border border-transparent"
-                        )}
+                    <BioButton
+                        onClick={() => { setAppMode('refine'); }}
+                        variant={appMode === 'refine' ? 'primary' : 'ghost'}
+                        className="flex-1"
                     >
                         REFINE
-                    </button>
-                    <button
-                        onClick={() => { playClick(); setAppMode('plan'); }}
-                        onMouseEnter={() => playHover()}
-                        className={clsx(
-                            "flex-1 py-1.5 text-xs font-bold rounded transition-colors",
-                            appMode === 'plan' ? "bg-amber-900/50 text-amber-400 border border-amber-700" : "text-emerald-800 hover:text-emerald-600 border border-transparent"
-                        )}
+                    </BioButton>
+                    <BioButton
+                        onClick={() => { setAppMode('plan'); }}
+                        variant={appMode === 'plan' ? 'tech' : 'ghost'}
+                        className="flex-1"
                     >
                         MANIFEST
-                    </button>
+                    </BioButton>
                 </div>
             </div>
 
@@ -472,7 +469,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                         </div>
 
                         {/* Refine Content Area */}
-                        <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 mb-4 border border-emerald-900/30 rounded bg-[#080a08]">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 mb-4 border border-emerald-900/30 rounded-lg bg-black/20 backdrop-blur-md shadow-inner">
                             {isOracleActive ? (
                                 <OracleChat />
                             ) : manifestation && viewMode === 'edit' ? (
@@ -482,7 +479,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                                 // --- PRISM VIEW with TABS (Council + Constitution) ---
                                 <div className="h-full flex flex-col">
                                     {/* Tab Bar */}
-                                    <div className="flex border-b border-emerald-900/50 bg-[#080808]">
+                                    <div className="flex border-b border-emerald-900/50 bg-black/30 backdrop-blur-sm rounded-t-lg overflow-hidden">
                                         <button
                                             onClick={() => { playClick(); setPrismViewTab('council'); }}
                                             className={clsx(
@@ -505,16 +502,36 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                                         >
                                             📜 Constitution
                                         </button>
+                                        <button
+                                            onClick={() => { playClick(); setPrismViewTab('telemetry'); }}
+                                            className={clsx(
+                                                "flex-1 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors",
+                                                prismViewTab === 'telemetry'
+                                                    ? "text-cyan-400 bg-cyan-900/30 border-b-2 border-cyan-500"
+                                                    : "text-cyan-700 hover:text-cyan-500"
+                                            )}
+                                        >
+                                            📡 Event Horizon
+                                        </button>
                                     </div>
 
                                     {/* Tab Content */}
                                     <div className="flex-1 overflow-y-auto">
                                         {prismViewTab === 'constitution' ? (
-                                            <ConstitutionViewer
-                                                constitution={livingConstitution}
-                                                onUpdateConstraints={(newConstraints) => updateLivingConstitution({ constraints: newConstraints })}
-                                            />
+                                            // Constitution Tab - Full width ConstitutionViewer
+                                            <div className="h-full overflow-y-auto">
+                                                <ConstitutionViewer
+                                                    constitution={livingConstitution}
+                                                    onUpdateConstraints={(newConstraints) => updateLivingConstitution({ constraints: newConstraints })}
+                                                />
+                                            </div>
+                                        ) : prismViewTab === 'telemetry' ? (
+                                            // Event Horizon Tab - Full width DeltaStream
+                                            <div className="h-full">
+                                                <DeltaStream constitution={livingConstitution} />
+                                            </div>
                                         ) : (
+                                            // Council & Tasks Tab
                                             <div className="p-4 space-y-6">
                                                 {/* Specialists Review */}
                                                 <div className="space-y-3">
@@ -587,143 +604,156 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                         {/* REFINE ACTION BUTTONS */}
                         {isProcessing ? (
                             <div className="flex gap-2">
-                                <button
-                                    onClick={() => { playClick(); useOuroborosStore.getState().setStatus('paused'); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="flex-1 py-3 rounded font-bold text-xs tracking-widest transition-all flex items-center justify-center gap-2 bg-amber-900/20 text-amber-400 border border-amber-800 hover:bg-amber-900/40"
+                                <BioButton
+                                    onClick={() => { useOuroborosStore.getState().setStatus('paused'); }}
+                                    variant="tech"
+                                    className="flex-1"
+                                    icon={<Pause className="w-4 h-4" />}
                                 >
-                                    <Pause className="w-4 h-4" />
                                     PAUSE
-                                </button>
-                                <button
+                                </BioButton>
+                                <BioButton
                                     onClick={handleStop}
-                                    onMouseEnter={() => playHover()}
-                                    className="px-4 py-3 rounded font-bold text-xs tracking-widest transition-all flex items-center justify-center gap-2 bg-red-900/20 text-red-400 border border-red-800 hover:bg-red-900/40"
-                                    title="Abort Execution"
+                                    variant="danger"
+                                    className="px-4"
                                 >
                                     <StopCircle className="w-4 h-4" />
-                                </button>
+                                </BioButton>
                             </div>
                         ) : status === 'paused' ? (
                             <div className="flex gap-2">
-                                <button
-                                    onClick={() => { playClick(); engine.processGraph(); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="flex-1 py-3 rounded font-bold text-xs tracking-widest transition-all flex items-center justify-center gap-2 bg-emerald-100 text-black border border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:bg-white"
+                                <BioButton
+                                    onClick={() => { engine.processGraph(); }}
+                                    variant="primary"
+                                    glow
+                                    className="flex-1"
+                                    icon={<Play className="w-4 h-4" />}
                                 >
-                                    <Play className="w-4 h-4" />
                                     RESUME FACTORY
-                                </button>
-                                <button
+                                </BioButton>
+                                <BioButton
                                     onClick={handleStop}
-                                    onMouseEnter={() => playHover()}
-                                    className="px-4 py-3 rounded font-bold text-xs tracking-widest transition-all flex items-center justify-center gap-2 bg-red-900/20 text-red-400 border border-red-800 hover:bg-red-900/40"
-                                    title="Abort Execution"
+                                    variant="danger"
+                                    className="px-4"
                                 >
                                     <StopCircle className="w-4 h-4" />
-                                </button>
+                                </BioButton>
                             </div>
                         ) : prismAnalysis ? (
                             // IF PRISM ANALYSIS EXISTS: START FACTORY
                             // IF PRISM ANALYSIS EXISTS: START OR RESUME
-                            <div className="grid grid-cols-5 gap-2">
+                            <div className="grid grid-cols-6 gap-2">
                                 {verifiedBricks.length > 0 ? (
-                                    <button
-                                        onClick={() => { playClick(); engine.resumeCurrentWorkbench(); }}
-                                        onMouseEnter={() => playHover()}
-                                        className="col-span-2 py-3 rounded font-bold text-xs tracking-widest transition-all flex items-center justify-center gap-2 bg-emerald-100 text-black border border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:bg-white"
+                                    <BioButton
+                                        onClick={() => { engine.resumeCurrentWorkbench(); }}
+                                        variant="primary"
+                                        glow
+                                        className="col-span-2"
+                                        icon={<Play className="w-4 h-4" />}
                                     >
-                                        <Play className="w-4 h-4" />
                                         RESUME FACTORY
-                                    </button>
+                                    </BioButton>
                                 ) : (
-                                    <button
-                                        onClick={() => { playClick(); engine.startExecution(); }}
-                                        onMouseEnter={() => playHover()}
-                                        className="col-span-2 py-3 rounded font-bold text-xs tracking-widest transition-all flex items-center justify-center gap-2 bg-emerald-100 text-black border border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:bg-white"
+                                    <BioButton
+                                        onClick={() => { engine.startExecution(); }}
+                                        variant="primary"
+                                        glow
+                                        className="col-span-2"
+                                        icon={<Flame className="w-4 h-4" />}
                                     >
-                                        <Flame className="w-4 h-4" />
                                         START FACTORY
-                                    </button>
+                                    </BioButton>
                                 )}
-                                <button
-                                    onClick={() => { playClick(); engine.downloadProject('markdown'); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="col-span-1 py-3 rounded font-bold text-[10px] tracking-widest transition-all flex items-center justify-center gap-1 bg-blue-900/20 text-blue-400 border border-blue-800 hover:bg-blue-900/40"
-                                    title="Download Project Bible (Markdown)"
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('markdown'); }}
+                                    variant="tech"
+                                    className="col-span-1"
+                                    icon={<Download className="w-3 h-3" />}
                                 >
-                                    <Download className="w-3 h-3" />
                                     MD
-                                </button>
-                                <button
-                                    onClick={() => { playClick(); engine.downloadProject('json'); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="col-span-1 py-3 rounded font-bold text-[10px] tracking-widest transition-all flex items-center justify-center gap-1 bg-purple-900/20 text-purple-400 border border-purple-800 hover:bg-purple-900/40"
-                                    title="Download Project Data (JSON)"
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('json'); }}
+                                    variant="tech"
+                                    className="col-span-1"
+                                    icon={<Workflow className="w-3 h-3" />}
                                 >
-                                    <Workflow className="w-3 h-3" />
                                     JSON
-                                </button>
-                                <button
-                                    onClick={() => { playClick(); engine.downloadProject('scaffold'); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="col-span-1 py-3 rounded font-bold text-[10px] tracking-widest transition-all flex items-center justify-center gap-1 bg-emerald-900/20 text-emerald-400 border border-emerald-800 hover:bg-emerald-900/40"
-                                    title="Download Project Scaffold (ZIP)"
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.transformManifestation('documentation'); }}
+                                    variant="tech"
+                                    className="col-span-1"
+                                    icon={<Wand2 className="w-3 h-3" />}
+                                    title="Transform JSON to readable prose (for turbo/small model output)"
                                 >
-                                    <FolderArchive className="w-3 h-3" />
+                                    ✨
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('scaffold'); }}
+                                    variant="primary"
+                                    className="col-span-1"
+                                    icon={<FolderArchive className="w-3 h-3" />}
+                                >
                                     ZIP
-                                </button>
+                                </BioButton>
                             </div>
                         ) : manifestation || projectPlan.length > 0 ? (
                             // IF RESULTS EXIST: RE-INITIALIZE + DOWNLOADS (Including Scaffold ZIP)
-                            <div className="grid grid-cols-5 gap-2">
-                                <button
-                                    onClick={() => { playClick(); engine.startRefinement(documentContent); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="col-span-2 py-2 rounded font-bold text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 bg-amber-900/20 text-amber-400 border border-amber-800 hover:bg-amber-900/40"
+                            <div className="grid grid-cols-6 gap-2">
+                                <BioButton
+                                    onClick={() => { engine.startRefinement(documentContent); }}
+                                    variant="tech"
+                                    className="col-span-2"
+                                    icon={<RotateCcw className="w-3 h-3" />}
                                 >
-                                    <RotateCcw className="w-3 h-3" />
                                     RE-INITIALIZE
-                                </button>
-                                <button
-                                    onClick={() => { playClick(); engine.downloadProject('markdown'); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="col-span-1 py-2 rounded font-bold text-[10px] tracking-widest transition-all flex items-center justify-center gap-1 bg-blue-900/20 text-blue-400 border border-blue-800 hover:bg-blue-900/40"
-                                    title="Download Project Bible (Markdown)"
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('markdown'); }}
+                                    variant="tech"
+                                    className="col-span-1"
+                                    icon={<Download className="w-3 h-3" />}
                                 >
-                                    <Download className="w-3 h-3" />
                                     MD
-                                </button>
-                                <button
-                                    onClick={() => { playClick(); engine.downloadProject('json'); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="col-span-1 py-2 rounded font-bold text-[10px] tracking-widest transition-all flex items-center justify-center gap-1 bg-purple-900/20 text-purple-400 border border-purple-800 hover:bg-purple-900/40"
-                                    title="Download Project Data (JSON)"
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('json'); }}
+                                    variant="tech"
+                                    className="col-span-1"
+                                    icon={<Workflow className="w-3 h-3" />}
                                 >
-                                    <Workflow className="w-3 h-3" />
                                     JSON
-                                </button>
-                                <button
-                                    onClick={() => { playClick(); engine.downloadProject('scaffold'); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="col-span-1 py-2 rounded font-bold text-[10px] tracking-widest transition-all flex items-center justify-center gap-1 bg-emerald-900/20 text-emerald-400 border border-emerald-800 hover:bg-emerald-900/40"
-                                    title="Download Project Scaffold (ZIP)"
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.transformManifestation('documentation'); }}
+                                    variant="tech"
+                                    className="col-span-1"
+                                    icon={<Wand2 className="w-3 h-3" />}
+                                    title="Transform JSON to readable prose (for turbo/small model output)"
                                 >
-                                    <FolderArchive className="w-3 h-3" />
+                                    ✨
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('scaffold'); }}
+                                    variant="primary"
+                                    className="col-span-1"
+                                    icon={<FolderArchive className="w-3 h-3" />}
+                                >
                                     ZIP
-                                </button>
+                                </BioButton>
                             </div>
                         ) : (
                             // DEFAULT: GENERATE TASK PLAN (Genesis -> Prism -> Saboteur)
-                            <button
-                                onClick={() => { playClick(); engine.startRefinement(documentContent); }}
-                                onMouseEnter={() => playHover()}
-                                className="w-full py-3 rounded font-bold text-xs tracking-widest transition-all flex items-center justify-center gap-2 bg-emerald-800 hover:bg-emerald-700 text-emerald-100 border border-emerald-600 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                            <BioButton
+                                onClick={() => { engine.startRefinement(documentContent); }}
                                 disabled={!documentContent.trim()}
+                                variant="primary"
+                                className="w-full"
+                                icon={<Sparkles className="w-4 h-4" />}
                             >
-                                <Sparkles className="w-4 h-4" />
                                 GENESIS → PRISM → FACTORY
-                            </button>
+                            </BioButton>
                         )}
                     </>
                 ) : (
@@ -740,7 +770,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                         </div>
 
                         {/* Manifest Content - Placeholder */}
-                        <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 mb-4 border border-amber-900/30 rounded bg-[#050505]">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 mb-4 border border-amber-900/30 rounded-lg bg-black/20 backdrop-blur-md">
                             <div className="h-full flex flex-col items-center justify-center text-amber-800/50 gap-4 p-8">
                                 <Workflow className="w-16 h-16 opacity-20" />
                                 <div className="text-center max-w-sm">
@@ -773,7 +803,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             {showOriginalPrompt && (
                 <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setShowOriginalPrompt(false)}>
                     <div
-                        className="bg-[#0a0a0a] border border-cyan-900/50 rounded-lg max-w-2xl w-full max-h-[80vh] flex flex-col"
+                        className="bg-zinc-950/95 backdrop-blur-xl border border-cyan-900/50 rounded-xl max-w-2xl w-full max-h-[80vh] flex flex-col shadow-[0_0_50px_rgba(6,182,212,0.15)]"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Modal Header */}

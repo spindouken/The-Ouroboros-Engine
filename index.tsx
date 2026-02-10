@@ -13,6 +13,10 @@ import { useOuroborosStore } from './store/ouroborosStore';
 import { OuroborosEngine } from './engine/OuroborosEngine';
 import './index.css';
 
+import { HUDLayer } from './components/ui/HUDLayer';
+import { DebugToolbar } from './components/ui/DebugToolbar';
+// import { DataStreamOverlay } from './components/visualization/DataStreamOverlay';
+
 // --- COMPONENT: APP ---
 
 const App = () => {
@@ -67,7 +71,10 @@ Directives:
     // Node selection is handled by local state via FlowCanvas callback
 
     return (
-        <div className="h-screen w-screen bg-[#050505] text-emerald-100 overflow-hidden font-mono selection:bg-emerald-900 selection:text-amber-100">
+        <div className="h-screen w-screen bg-canvas text-emerald-100 overflow-hidden selection:bg-emerald-900 selection:text-amber-100 relative">
+            {/* <DataStreamOverlay /> */}
+            <HUDLayer />
+            <DebugToolbar />
 
             {showSettings && (
                 <SettingsPanel

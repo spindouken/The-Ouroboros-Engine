@@ -1,5 +1,5 @@
-import { db } from './db/ouroborosDB';
-import { AgentMemory, AgentMemoryManager } from './types';
+import { db } from '../db/ouroborosDB';
+import { AgentMemory, AgentMemoryManager } from '../types';
 
 export class AgentMemoryManagerImpl implements AgentMemoryManager {
 

@@ -10,12 +10,14 @@ const ConstitutionNode = ({ data, selected }: NodeProps) => {
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className={`
-                relative w-[300px] rounded-xl border border-amber-500/50 
-                bg-black/90 backdrop-blur-xl shadow-[0_0_30px_rgba(245,158,11,0.2)]
+                relative w-[300px] rounded-xl border border-amber-500/60 
+                bg-[#050505] shadow-[0_0_40px_rgba(245,158,11,0.2)]
                 overflow-hidden transition-all duration-300
-                ${selected ? 'ring-2 ring-amber-400' : ''}
+                ${selected ? 'ring-2 ring-amber-400 shadow-[0_0_60px_rgba(245,158,11,0.4)]' : ''}
             `}
         >
+            {/* Void Gradient Overlay */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-amber-900/10 via-transparent to-transparent opacity-50 pointer-events-none" />
             {/* Header */}
             <div className="bg-gradient-to-r from-amber-900/50 to-orange-900/50 p-3 border-b border-amber-500/30 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-amber-200 font-bold tracking-wider">

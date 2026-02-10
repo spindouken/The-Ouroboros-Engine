@@ -1,7 +1,7 @@
 import { UnifiedLLMClient, LLMResponse } from './UnifiedLLMClient';
 import { Graph, LogEntry, PlanItem, Node, NodeStatus, AppSettings, AppMode, OracleMessage, PotentialConstitution } from '../types';
 import { extractJson as safeExtractJson } from '../utils/safe-json';
-import { createPrismController, PrismController } from '../prism-controller';
+import { createPrismController, PrismController } from './prism-controller';
 // V2.99 Modules
 import { GenesisProtocol } from './genesis-protocol';
 import { Saboteur } from './saboteur';
@@ -12,14 +12,15 @@ import { AntagonistMirror } from './antagonist-mirror';
 import { BlackboardDeltaManager } from './blackboard-delta';
 import { SecurityPatcher } from './security-patcher';
 import { LosslessCompiler } from './lossless-compiler';
+import { ManifestationTransformer, quickTransform } from './manifestation-transformer';
 import { Scaffolder, ScaffoldConfig } from './scaffolder';
 import { CheckpointManager, SessionPhase } from './checkpoint';
 import { ProjectInsightManager } from './project-insight-manager'; // V2.99
 
-import { createKnowledgeGraphManager } from '../knowledge-graph';
-import { createAgentMemoryManager } from '../agent-memory-manager';
-import { createRedFlagValidator } from '../red-flag-validator';
-import { createRateLimiter } from '../rate-limiter';
+import { createKnowledgeGraphManager } from './knowledge-graph';
+import { createAgentMemoryManager } from './agent-memory-manager';
+import { createRedFlagValidator } from './red-flag-validator';
+import { createRateLimiter } from './rate-limiter';
 import { db, DBProject } from '../db/ouroborosDB';
 import { useOuroborosStore } from '../store/ouroborosStore';
 import { MODEL_TIERS } from '../constants';
@@ -350,6 +351,12 @@ export class OuroborosEngine {
                     await this.continueExecution();
                     break;
 
+                case SessionPhase.COMPLETE:
+                    // Session is complete - just restore state and show the results
+                    this.addLog('success', '[Resume] Session complete. Manifestation ready for review.');
+                    store.setStatus('idle');
+                    break;
+
                 default:
                     this.addLog('warn', `Unknown checkpoint phase: ${phase}. Cannot resume.`);
                     store.setStatus('idle');
@@ -594,11 +601,104 @@ export class OuroborosEngine {
         if (session.edges) await db.edges.bulkAdd(session.edges);
         if (session.logs) await db.logs.bulkAdd(session.logs);
 
+        // =====================================================================
+        // [V2.99 FIX] Deep Hydration on Load
+        // Problem: When loading completed sessions, verifiedBricks may be stale
+        // and manifestation may be missing. We need to reconstruct from nodes.
+        // =====================================================================
+
+        let hydratedBricks = session.verifiedBricks || [];
+        let hydratedManifestation = session.manifestation || null;
+
+        // Check if we need to hydrate bricks from nodes
+        const completedNodes = session.nodes?.filter(n =>
+            n.status === 'complete' &&
+            (n.output || (n.data && (n.data as any).artifact)) &&
+            ((n.type as string) === 'specialist' || (n.type as string) === 'custom')
+        ) || [];
+
+        if (completedNodes.length > 0 && hydratedBricks.length < completedNodes.length) {
+            this.addLog('info', `[Codex] Deep Hydrating ${completedNodes.length} completed nodes...`);
+
+            const existingIds = new Set(hydratedBricks.map((b: any) => b.id));
+
+            for (const node of completedNodes) {
+                if (existingIds.has(node.id)) continue;
+
+                const rawOutput = node.output || (node.data as any).artifact;
+                let finalArtifact = "";
+
+                if (typeof rawOutput === 'string') {
+                    if (rawOutput.length > 50) {
+                        try {
+                            if (rawOutput.trim().startsWith('{')) {
+                                const parsed = JSON.parse(rawOutput);
+                                finalArtifact = parsed.repaired_artifact || parsed.artifact || (parsed.repairedArtifact as any)?.content || rawOutput;
+                                if (typeof finalArtifact === 'object') {
+                                    finalArtifact = JSON.stringify(finalArtifact, null, 2);
+                                }
+                            } else {
+                                finalArtifact = rawOutput;
+                            }
+                        } catch (e) {
+                            finalArtifact = rawOutput;
+                        }
+                    }
+                } else if (typeof rawOutput === 'object' && rawOutput !== null) {
+                    finalArtifact = (rawOutput as any).repaired_artifact || (rawOutput as any).artifact || JSON.stringify(rawOutput, null, 2);
+                    if (typeof finalArtifact === 'object') {
+                        finalArtifact = JSON.stringify(finalArtifact, null, 2);
+                    }
+                }
+
+                if (finalArtifact && finalArtifact.length > 20) {
+                    hydratedBricks.push({
+                        id: node.id,
+                        instruction: node.instruction || node.label || "Unknown Task",
+                        persona: (node.data as any)?.persona || "Unknown Specialist",
+                        artifact: finalArtifact,
+                        confidence: 100,
+                        verifiedAt: Date.now()
+                    } as any);
+                }
+            }
+
+            this.addLog('info', `[Codex] Hydrated ${hydratedBricks.length} verified bricks.`);
+        }
+
+        // Re-compile manifestation if missing but we have bricks
+        if ((!hydratedManifestation || hydratedManifestation.length < 100) && hydratedBricks.length > 0) {
+            this.addLog('info', `[Codex] Re-compiling manifestation from ${hydratedBricks.length} bricks...`);
+
+            try {
+                const assembly = await this.losslessCompiler.compile({
+                    verifiedBricks: hydratedBricks as any,
+                    projectMetadata: {
+                        name: (session as any).projectPlan?.overview?.name || "Ouroboros Project",
+                        domain: session.livingConstitution?.domain || "Unknown",
+                        generatedAt: Date.now(),
+                        brickCount: hydratedBricks.length,
+                        techStack: session.livingConstitution?.techStack || [],
+                        constraints: session.livingConstitution?.constraints || [],
+                        decisions: session.livingConstitution?.decisions || [],
+                        warnings: session.livingConstitution?.warnings || [],
+                        originalPrompt: session.livingConstitution?.originalRequirements || session.documentContent
+                    }
+                });
+
+                hydratedManifestation = assembly.manifestation;
+                this.addLog('success', `[Codex] Manifestation re-compiled successfully.`);
+            } catch (error) {
+                console.error('[Codex] Failed to re-compile manifestation:', error);
+                this.addLog('warn', `[Codex] Could not re-compile manifestation: ${error}`);
+            }
+        }
+
         // Update Store
         const store = useOuroborosStore.getState();
         store.setDocumentContent(session.documentContent || "");
         store.setProjectPlan(session.projectPlan || []);
-        store.setManifestation(session.manifestation || null);
+        store.setManifestation(hydratedManifestation);
 
         // Update specific state directly
         useOuroborosStore.setState({
@@ -611,9 +711,10 @@ export class OuroborosEngine {
             currentSessionName: session.name,
 
             // V2.99 State (Pragmatic Brick Factory)
-            prismAnalysis: store.prismAnalysis || null,
+            // [FIX] Use session.prismAnalysis, NOT store.prismAnalysis - the store is empty on load!
+            prismAnalysis: session.prismAnalysis || null,
             livingConstitution: session.livingConstitution || store.livingConstitution,
-            verifiedBricks: session.verifiedBricks || [],
+            verifiedBricks: hydratedBricks,
             usageMetrics: session.usageMetrics || {} // Restore Usage Metrics
         });
 
@@ -1962,7 +2063,14 @@ export class OuroborosEngine {
                             if (allVerifiedBricks.length < 5) { // Heuristic check
                                 this.addLog('info', `[Compiler] Deep Scan: Checking all graph nodes for artifacts...`, nodeId);
                                 const allNodes = await db.nodes.toArray(); // Fallback: Get all nodes if projectId is not in store
-                                const completedNodes = allNodes.filter(n => n.status === 'complete' && n.data && n.data.output);
+
+                                // [V2.99 Fix - Corrected Property Access]
+                                // Historical nodes store the final text in `node.output` (root) 
+                                // OR `node.data.artifact`. `node.data.output` does NOT exist.
+                                const completedNodes = allNodes.filter(n =>
+                                    n.status === 'complete' &&
+                                    (n.output || (n.data && (n.data as any).artifact))
+                                );
 
                                 // Filter out nodes we already have bricks for
                                 const existingNodeIds = new Set(allVerifiedBricks.map(b => b.id)); // Assuming brick.id usually matches node.id or related
@@ -1971,16 +2079,50 @@ export class OuroborosEngine {
                                 // but usually verifiedBrick.id IS the node.id in this system.
 
                                 completedNodes.forEach(node => {
-                                    if (!existingNodeIds.has(node.id) && node.type === 'specialist') {
+                                    if (!existingNodeIds.has(node.id) && ((node.type as string) === 'specialist' || (node.type as string) === 'custom')) {
                                         // Re-construct a brick from the node data
-                                        // Only if it looks like a valid output
-                                        if (typeof node.data.output === 'string' && node.data.output.length > 50) {
+                                        // [V2.99 Fix] Use correct property access like MD download does
+                                        const rawOutput = node.output || (node.data as any).artifact;
+
+                                        let finalArtifact = "";
+
+                                        if (typeof rawOutput === 'string') {
+                                            if (rawOutput.length > 50) {
+                                                // Try to parse if it looks like JSON wrapper
+                                                try {
+                                                    if (rawOutput.trim().startsWith('{')) {
+                                                        const parsed = JSON.parse(rawOutput);
+                                                        finalArtifact = parsed.repaired_artifact || parsed.artifact || (parsed.repairedArtifact as any)?.content || rawOutput;
+                                                        // Handle nested structure from debug report
+                                                        if (typeof finalArtifact === 'object') {
+                                                            if (parsed.repaired_artifact && typeof parsed.repaired_artifact === 'object') {
+                                                                finalArtifact = JSON.stringify(parsed.repaired_artifact, null, 2);
+                                                            } else {
+                                                                finalArtifact = JSON.stringify(finalArtifact, null, 2);
+                                                            }
+                                                        }
+                                                    } else {
+                                                        finalArtifact = rawOutput;
+                                                    }
+                                                } catch (e) {
+                                                    finalArtifact = rawOutput; // Treat as smooth text
+                                                }
+                                            }
+                                        } else if (typeof rawOutput === 'object' && rawOutput !== null) {
+                                            // It's already an object in DB
+                                            finalArtifact = (rawOutput as any).repaired_artifact || (rawOutput as any).artifact || JSON.stringify(rawOutput, null, 2);
+                                            if (typeof finalArtifact === 'object') {
+                                                finalArtifact = JSON.stringify(finalArtifact, null, 2);
+                                            }
+                                        }
+
+                                        if (finalArtifact && finalArtifact.length > 20) {
                                             // Mock a verified brick structure
                                             allVerifiedBricks.push({
                                                 id: node.id,
-                                                instruction: node.instruction || "Unknown Task",
+                                                instruction: node.instruction || node.label || "Unknown Task",
                                                 persona: (node.data as any).persona || "Unknown Specialist",
-                                                artifact: node.data.output,
+                                                artifact: finalArtifact,
                                                 confidence: 100,
                                                 verifiedAt: Date.now()
                                             } as any);
@@ -2410,6 +2552,127 @@ export class OuroborosEngine {
             a.download = `project_data_${new Date().toISOString().split('T')[0]}.json`;
             a.click();
             URL.revokeObjectURL(url);
+        }
+    }
+
+    /**
+     * Transform JSON manifestation to human-readable prose
+     * 
+     * This is particularly useful when running with small/turbo models (like gemma3:12b)
+     * which output structured JSON rather than narrative markdown.
+     * 
+     * @param format - Target format for the transformation
+     */
+    public async transformManifestation(
+        format: 'narrative' | 'documentation' | 'executive_summary' | 'technical_spec' = 'documentation'
+    ): Promise<void> {
+        const store = useOuroborosStore.getState();
+
+        this.addLog('info', '[Transform] Collecting node outputs for transformation...');
+
+        // Always collect directly from nodes to get the raw JSON outputs
+        // (The manifestation in store might already be compiled markdown)
+        let jsonSource: string;
+
+        try {
+            const allNodes = await db.nodes.toArray();
+            const completedNodes = allNodes.filter(n =>
+                n.status === 'complete' &&
+                (n.output || (n.data && (n.data as any).artifact)) &&
+                ((n.type as string) === 'specialist' || (n.type as string) === 'custom')
+            );
+
+            if (completedNodes.length === 0) {
+                this.addLog('error', '[Transform] No completed specialist nodes to transform.');
+                alert('No completed specialist nodes found. Run the pipeline first.');
+                return;
+            }
+
+            // Collect all node outputs
+            const nodeOutputs: any[] = [];
+            let hasJsonOutputs = false;
+
+            for (const node of completedNodes) {
+                let output = node.output || (node.data as any).artifact;
+
+                // Try to parse if it's a JSON string
+                if (typeof output === 'string') {
+                    const trimmed = output.trim();
+
+                    // Check if it starts with { (likely JSON)
+                    if (trimmed.startsWith('{')) {
+                        try {
+                            output = JSON.parse(output);
+                            hasJsonOutputs = true;
+                        } catch {
+                            // Keep as string - might be markdown or plain text
+                        }
+                    }
+                } else if (typeof output === 'object' && output !== null) {
+                    hasJsonOutputs = true;
+                }
+
+                nodeOutputs.push({
+                    id: node.id,
+                    label: node.label || node.instruction || 'Unknown Task',
+                    department: (node.data as any)?.persona || 'Unknown Specialist',
+                    output
+                });
+            }
+
+            // If no JSON outputs detected, the content is already prose
+            if (!hasJsonOutputs) {
+                this.addLog('info', '[Transform] Node outputs are already in prose/markdown format. No transformation needed.');
+                alert('The node outputs are already in markdown/prose format. No transformation needed.\n\nThis feature is for converting JSON output (from small/turbo models) to readable prose.');
+                return;
+            }
+
+            // Build a composite JSON structure
+            jsonSource = JSON.stringify({
+                projectName: store.livingConstitution?.domain || 'Ouroboros Project',
+                constitution: store.livingConstitution,
+                bricks: nodeOutputs
+            }, null, 2);
+
+            this.addLog('info', `[Transform] Found ${completedNodes.length} nodes with JSON output. Converting to ${format} format...`);
+
+        } catch (error) {
+            console.error('[Transform] Failed to collect nodes:', error);
+            this.addLog('error', `[Transform] Failed to collect nodes: ${error}`);
+            alert(`Failed to collect nodes: ${error}`);
+            return;
+        }
+
+        try {
+            // Use quick transform (no LLM, template-based)
+            const projectName = store.livingConstitution?.domain || 'Ouroboros Project';
+            const transformed = quickTransform(jsonSource, format, projectName);
+
+            if (!transformed || transformed.length < 100) {
+                this.addLog('warn', '[Transform] Transformation produced minimal output');
+                alert('Transformation produced minimal output. The JSON may not be in the expected format.');
+                return;
+            }
+
+            // Update the manifestation in store
+            store.setManifestation(transformed);
+
+            // Also download the result
+            const date = new Date().toISOString().split('T')[0];
+            const blob = new Blob([transformed], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `PROJECT_${format.toUpperCase()}_${date}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            this.addLog('success', `[Transform] Successfully converted ${format} format and downloaded.`);
+
+        } catch (error) {
+            console.error('[Transform] Transformation failed:', error);
+            this.addLog('error', `[Transform] Failed: ${error}`);
+            alert(`Transformation failed: ${error}`);
         }
     }
 

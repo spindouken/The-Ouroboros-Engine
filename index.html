@@ -6,6 +6,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>The Ouroboros Engine</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'var(--bg-canvas)',
+            node: 'var(--node-bg)',
+            edge: 'var(--edge-color)',
+          },
+          boxShadow: {
+            'neon': 'var(--accent-glow)',
+          }
+        }
+      }
+    }
+  </script>
   <style>
     body {
       font-size: 16px;

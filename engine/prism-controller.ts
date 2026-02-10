@@ -13,9 +13,9 @@
  * @version V2.99
  */
 
-import { AgentConfig, MicroTask, NodeStatus } from './types';
-import { safeJsonParseArray, safeJsonParseObject, extractYamlOrJson, safeYamlParse } from './utils/safe-json';
-import { Constitution } from './engine/genesis-protocol';
+import { AgentConfig, MicroTask, NodeStatus } from '../types';
+import { safeJsonParseArray, safeJsonParseObject, extractYamlOrJson, safeYamlParse } from '../utils/safe-json';
+import { Constitution } from './genesis-protocol';
 
 export interface PrismConfig {
     maxAtomicTasks?: number;

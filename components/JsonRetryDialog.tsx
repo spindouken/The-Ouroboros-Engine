@@ -7,6 +7,7 @@
 
 import React from 'react';
 import { X, RefreshCw, SkipForward, AlertTriangle } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface FailedNode {
     nodeId: string;
@@ -48,90 +49,111 @@ export const JsonRetryDialog: React.FC<JsonRetryDialogProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8">
-            <div className="bg-[#0a0c0a] border border-amber-900/80 rounded-lg w-full max-w-lg shadow-2xl p-6 relative">
-                {/* Close Button */}
-                <button
-                    onClick={onClose}
-                    className="absolute top-4 right-4 text-amber-700 hover:text-amber-400 transition-colors"
-                    aria-label="Close dialog"
+        <AnimatePresence>
+            <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-8"
+            >
+                <motion.div
+                    initial={{ scale: 0.9, y: 20, opacity: 0 }}
+                    animate={{ scale: 1, y: 0, opacity: 1 }}
+                    exit={{ scale: 0.9, y: 20, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                    className="bg-[#050505] border border-amber-500/50 rounded-xl w-full max-w-lg shadow-[0_0_50px_rgba(245,158,11,0.15)] p-6 relative overflow-hidden"
                 >
-                    <X className="w-5 h-5" />
-                </button>
+                    {/* Scanline Effect */}
+                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20 pointer-events-none mix-blend-overlay"></div>
 
-                {/* Header */}
-                <div className="flex items-center gap-3 mb-4">
-                    <AlertTriangle className="w-6 h-6 text-amber-500" />
-                    <h2 className="text-lg font-bold text-amber-400">JSON Parsing Failed</h2>
-                </div>
+                    {/* Close Button */}
+                    <button
+                        onClick={onClose}
+                        className="absolute top-4 right-4 text-amber-700 hover:text-amber-400 transition-colors z-10"
+                        aria-label="Close dialog"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
 
-                {/* Description */}
-                <p className="text-sm text-emerald-600 mb-4">
-                    {failedNodes.length} node(s) returned invalid JSON.
-                    Would you like to retry with explicit JSON formatting instructions?
-                </p>
-
-                {/* Failed Nodes List */}
-                <div className="max-h-48 overflow-y-auto mb-4 space-y-2 scrollbar-thin scrollbar-thumb-emerald-900">
-                    {failedNodes.map(node => (
-                        <div
-                            key={node.nodeId}
-                            className={`p-2 rounded border cursor-pointer transition-all ${selectedNodes.has(node.nodeId)
-                                    ? 'bg-amber-900/30 border-amber-500'
-                                    : 'bg-black border-emerald-900/50 hover:border-emerald-700'
-                                }`}
-                            onClick={() => toggleNode(node.nodeId)}
-                            role="checkbox"
-                            aria-checked={selectedNodes.has(node.nodeId)}
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    toggleNode(node.nodeId);
-                                }
-                            }}
-                        >
-                            <div className="text-sm font-bold text-emerald-400">{node.nodeName}</div>
-                            <div className="text-xs text-emerald-700 truncate font-mono">
-                                {node.rawOutput.substring(0, 100)}...
-                            </div>
+                    {/* Header */}
+                    <div className="flex items-center gap-3 mb-4 relative z-10">
+                        <div className="p-2 bg-amber-500/10 rounded border border-amber-500/30">
+                            <AlertTriangle className="w-6 h-6 text-amber-500" />
                         </div>
-                    ))}
-                </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-amber-400 tracking-wide uppercase">JSON Parsing Failure</h2>
+                            <div className="text-[10px] text-amber-600 font-mono">PROTOCOL EXCEPTION_0xJSON</div>
+                        </div>
+                    </div>
 
-                {/* Action Buttons */}
-                <div className="flex gap-2">
-                    <button
-                        onClick={onRetryAll}
-                        className="flex-1 flex items-center justify-center gap-2 p-2 bg-amber-900/30 border border-amber-700 rounded text-amber-400 hover:bg-amber-900/50 transition-colors font-medium text-sm"
-                    >
-                        <RefreshCw className="w-4 h-4" />
-                        Retry All
-                    </button>
-                    <button
-                        onClick={handleRetrySelected}
-                        disabled={selectedNodes.size === 0}
-                        className="flex-1 flex items-center justify-center gap-2 p-2 bg-emerald-900/30 border border-emerald-700 rounded text-emerald-400 hover:bg-emerald-900/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm"
-                    >
-                        <RefreshCw className="w-4 h-4" />
-                        Retry Selected ({selectedNodes.size})
-                    </button>
-                    <button
-                        onClick={onSkipAll}
-                        className="flex-1 flex items-center justify-center gap-2 p-2 bg-red-900/30 border border-red-700 rounded text-red-400 hover:bg-red-900/50 transition-colors font-medium text-sm"
-                    >
-                        <SkipForward className="w-4 h-4" />
-                        Skip All
-                    </button>
-                </div>
+                    {/* Description */}
+                    <p className="text-sm text-emerald-400/80 mb-6 font-mono leading-relaxed relative z-10">
+                        <strong className="text-emerald-300">{failedNodes.length} node(s)</strong> returned corrupted or invalid JSON data.
+                        <br />
+                        Initiate recovery protocol to re-prompt agents with strict formatting constraints?
+                    </p>
 
-                {/* Help Text */}
-                <p className="text-xs text-emerald-800 mt-4 text-center">
-                    Retry will re-prompt the LLM with explicit JSON formatting instructions.
-                    Skip will continue with empty/fallback data.
-                </p>
-            </div>
-        </div>
+                    {/* Failed Nodes List */}
+                    <div className="max-h-48 overflow-y-auto mb-6 space-y-2 scrollbar-thin scrollbar-thumb-amber-900 pr-2 relative z-10">
+                        {failedNodes.map(node => (
+                            <div
+                                key={node.nodeId}
+                                className={`p-3 rounded border cursor-pointer transition-all flex justify-between items-center group ${selectedNodes.has(node.nodeId)
+                                    ? 'bg-amber-900/20 border-amber-500/50'
+                                    : 'bg-black/40 border-emerald-900/30 hover:border-emerald-500/50'
+                                    }`}
+                                onClick={() => toggleNode(node.nodeId)}
+                                role="checkbox"
+                                aria-checked={selectedNodes.has(node.nodeId)}
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        toggleNode(node.nodeId);
+                                    }
+                                }}
+                            >
+                                <div className="overflow-hidden">
+                                    <div className="text-xs font-bold text-emerald-300 uppercase tracking-wider group-hover:text-amber-400 transition-colors">{node.nodeName}</div>
+                                    <div className="text-[10px] text-emerald-700 truncate font-mono mt-1">
+                                        {node.rawOutput.substring(0, 80)}...
+                                    </div>
+                                </div>
+                                <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${selectedNodes.has(node.nodeId) ? 'bg-amber-500 border-amber-400' : 'border-emerald-800 bg-black'}`}>
+                                    {selectedNodes.has(node.nodeId) && <div className="w-2 h-2 bg-black rounded-sm" />}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-3 relative z-10">
+                        <button
+                            onClick={onRetryAll}
+                            className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/50 rounded text-amber-400 hover:text-amber-200 hover:shadow-[0_0_15px_rgba(245,158,11,0.3)] transition-all font-bold text-xs uppercase tracking-widest"
+                        >
+                            <RefreshCw className="w-3 h-3" />
+                            Retry All
+                        </button>
+                        <button
+                            onClick={handleRetrySelected}
+                            disabled={selectedNodes.size === 0}
+                            className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/50 rounded text-emerald-400 hover:text-emerald-200 hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-30 disabled:cursor-not-allowed transition-all font-bold text-xs uppercase tracking-widest"
+                        >
+                            <RefreshCw className="w-3 h-3" />
+                            Retry ({selectedNodes.size})
+                        </button>
+                        <button
+                            onClick={onSkipAll}
+                            className="flex-shrink-0 flex items-center justify-center gap-2 py-3 px-4 bg-red-900/10 hover:bg-red-900/20 border border-red-900/50 rounded text-red-400 hover:text-red-300 transition-all font-bold text-xs uppercase tracking-widest"
+                            title="Abort and use fallback data"
+                        >
+                            <SkipForward className="w-3 h-3" />
+                        </button>
+                    </div>
+                </motion.div>
+            </motion.div>
+        </AnimatePresence>
     );
 };
 

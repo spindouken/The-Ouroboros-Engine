@@ -9,6 +9,7 @@ import { useSoundEffects } from '../hooks/useSoundEffects';
 import { useOuroborosStore } from '../store/ouroborosStore';
 import { SessionCodex } from './SessionCodex';
 import { HydraTierEditor } from './settings/HydraTierEditor';
+import { BioButton } from './ui/BioButton';
 
 interface SettingsPanelProps {
     onClose: () => void;
@@ -59,28 +60,30 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
 
     const mainContent = (
         <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8">
-            <div className="bg-[#0a0c0a] border border-emerald-900/80 rounded-lg w-full max-w-lg shadow-2xl p-6 relative max-h-full overflow-y-auto custom-scrollbar">
-                <button
-                    onClick={() => { playClick(); onClose(); }}
-                    onMouseEnter={() => playHover()}
-                    className="absolute top-4 right-4 text-emerald-700 hover:text-emerald-400"
+            <div className="bg-node border border-emerald-900/80 rounded-lg w-full max-w-lg shadow-2xl p-6 relative max-h-full overflow-y-auto custom-scrollbar">
+                <BioButton
+                    onClick={onClose}
+                    variant="ghost"
+                    className="absolute top-4 right-4 !p-1"
                 >
                     <X className="w-5 h-5" />
-                </button>
+                </BioButton>
 
-                <div className="flex items-center gap-4 mb-6 border-b border-emerald-900/50 pb-2">
-                    <button
-                        onClick={() => { playClick(); setActiveTab('config'); }}
-                        className={`text-sm font-bold flex items-center gap-2 pb-1 ${activeTab === 'config' ? 'text-emerald-400 border-b-2 border-emerald-500' : 'text-emerald-700 hover:text-emerald-500'}`}
+                <div className="flex items-center justify-center gap-4 mb-6 border-b border-emerald-900/50 pb-2">
+                    <BioButton
+                        onClick={() => { setActiveTab('config'); }}
+                        variant={activeTab === 'config' ? 'tech' : 'ghost'}
+                        icon={<Settings className="w-4 h-4" />}
                     >
-                        <Settings className="w-4 h-4" /> CONFIG
-                    </button>
-                    <button
-                        onClick={() => { playClick(); setActiveTab('codex'); }}
-                        className={`text-sm font-bold flex items-center gap-2 pb-1 ${activeTab === 'codex' ? 'text-emerald-400 border-b-2 border-emerald-500' : 'text-emerald-700 hover:text-emerald-500'}`}
+                        CONFIG
+                    </BioButton>
+                    <BioButton
+                        onClick={() => { setActiveTab('codex'); }}
+                        variant={activeTab === 'codex' ? 'tech' : 'ghost'}
+                        icon={<FolderOpen size={16} />}
                     >
-                        <FolderOpen size={16} /> SESSION CODEX
-                    </button>
+                        SESSION CODEX
+                    </BioButton>
                 </div>
 
                 {activeTab === 'config' ? (
@@ -771,34 +774,38 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                             </div>
 
                             <div className="grid grid-cols-2 gap-3">
-                                <button
+                                <BioButton
                                     onClick={handleExport}
-                                    onMouseEnter={() => playHover()}
-                                    className="flex items-center justify-center gap-2 p-2 bg-emerald-900/20 border border-emerald-900/50 rounded hover:bg-emerald-900/40 text-xs text-emerald-400 font-bold"
+                                    variant="primary"
+                                    icon={<Download className="w-3 h-3" />}
                                 >
-                                    <Download className="w-3 h-3" /> EXPORT DB
-                                </button>
-                                <label
-                                    onMouseEnter={() => playHover()}
-                                    className="flex items-center justify-center gap-2 p-2 bg-emerald-900/20 border border-emerald-900/50 rounded hover:bg-emerald-900/40 text-xs text-emerald-400 font-bold cursor-pointer"
-                                >
-                                    <Upload className="w-3 h-3" /> IMPORT DB
+                                    EXPORT DB
+                                </BioButton>
+                                <label className="contents">
+                                    <BioButton
+                                        as="div"
+                                        variant="primary"
+                                        className="cursor-pointer"
+                                        icon={<Upload className="w-3 h-3" />}
+                                    >
+                                        IMPORT DB
+                                    </BioButton>
                                     <input type="file" accept=".json" onChange={handleImport} className="hidden" />
                                 </label>
-                                <button
-                                    onClick={() => { playClick(); engine.printDebugReport(); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="flex items-center justify-center gap-2 p-2 bg-amber-900/20 border border-amber-900/50 rounded hover:bg-amber-900/40 text-xs text-amber-400 font-bold"
+                                <BioButton
+                                    onClick={() => { engine.printDebugReport(); }}
+                                    variant="tech"
+                                    icon={<Terminal className="w-3 h-3" />}
                                 >
-                                    <Terminal className="w-3 h-3" /> PRINT DEBUG
-                                </button>
-                                <button
-                                    onClick={() => { playClick(); engine.downloadDebugReport(); }}
-                                    onMouseEnter={() => playHover()}
-                                    className="flex items-center justify-center gap-2 p-2 bg-red-900/20 border border-red-900/50 rounded hover:bg-red-900/40 text-xs text-red-400 font-bold"
+                                    PRINT DEBUG
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadDebugReport(); }}
+                                    variant="danger"
+                                    icon={<Bug className="w-3 h-3" />}
                                 >
-                                    <Bug className="w-3 h-3" /> DOWNLOAD REPORT
-                                </button>
+                                    DOWNLOAD REPORT
+                                </BioButton>
                             </div>
                         </div>
 

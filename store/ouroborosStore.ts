@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { LogEntry, OracleMessage, OracleContext, Node, PotentialConstitution } from '../types';
+import { LogEntry, OracleMessage, OracleContext, Node, PotentialConstitution, VisualProfile } from '../types';
 import { DEFAULT_HYDRA_SETTINGS, MODEL_TIERS } from '../constants';
 
 // V2.99 Types for Blackboard Delta / Living Constitution
@@ -114,6 +114,7 @@ interface OuroborosState {
     // V2.99: Living Constitution State (Blackboard Delta - Sec 4.5)
     verifiedBricks: VerifiedBrickState[];
     addVerifiedBrick: (brick: VerifiedBrickState) => void;
+    setVerifiedBricks: (bricks: VerifiedBrickState[]) => void;
     clearVerifiedBricks: () => void;
 
     livingConstitution: LivingConstitutionState;
@@ -130,6 +131,11 @@ interface OuroborosState {
     setPrismAnalysis: (analysis: any | null) => void;
 
     // Actions
+    // V3.0: HUD Alerts
+    alerts: import('../types').Alert[];
+    addAlert: (type: 'success' | 'error' | 'info', title: string, message?: string) => void;
+    removeAlert: (id: string) => void;
+
     resetSession: () => void;
 }
 
@@ -156,6 +162,8 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
 
     // Settings (Cached for Engine performance, synced with DB)
     settings: {
+        visualProfile: 'CYBERPUNK', // Default to V3.0 aesthetic
+        reduceMotion: false,
         model: 'gemini-2.0-flash-exp', // Updated default
         concurrency: 1,
         rpm: 10,
@@ -295,6 +303,8 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         verifiedBricks: [...state.verifiedBricks, brick]
     })),
 
+    setVerifiedBricks: (bricks) => set({ verifiedBricks: bricks }),
+
     clearVerifiedBricks: () => set({ verifiedBricks: [] }),
 
     // V2.99: Living Constitution State (Sec 4.5)
@@ -395,6 +405,23 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         prismAnalysis: null,
         projectInsights: '' // V2.99: Clear mid-term memory
     }),
+
+    // V3.0: HUD Alerts
+    alerts: [],
+    addAlert: (type, title, message) => set((state) => {
+        const id = crypto.randomUUID();
+        // Auto-dismiss: 5s for info/success, 8s for errors (so they don't stick forever)
+        const timeout = type === 'error' ? 8000 : 5000;
+
+        setTimeout(() => {
+            get().removeAlert(id);
+        }, timeout);
+
+        return { alerts: [...state.alerts, { id, type, title, message, timestamp: Date.now() }] };
+    }),
+    removeAlert: (id) => set((state) => ({
+        alerts: state.alerts.filter(a => a.id !== id)
+    })),
 
     // V2.99: Prism Analysis
     prismAnalysis: null,
