@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { LogEntry, OracleMessage, OracleContext, Node, PotentialConstitution, VisualProfile } from '../types';
 import { DEFAULT_HYDRA_SETTINGS, MODEL_TIERS } from '../constants';
+import type { ProjectMode } from '../engine/genesis-protocol';
+import { normalizeSettingsPatch } from '../engine/utils/decomposition-settings';
 
 // V2.99 Types for Blackboard Delta / Living Constitution
 export interface VerifiedBrickState {
@@ -22,6 +24,10 @@ export interface LivingConstitutionState {
     warnings: string[];
     lastUpdated: number;
     deltaCount: number;
+    mode?: ProjectMode;
+    modeSource?: 'auto_detected' | 'user_override';
+    modeConfidence?: number;
+    modeReasoning?: string;
 }
 
 /**
@@ -52,6 +58,8 @@ interface OuroborosState {
     // App Status (extended for HARD PAUSE)
     status: 'idle' | 'thinking' | 'paused' | 'hard_paused';
     setStatus: (status: 'idle' | 'thinking' | 'paused' | 'hard_paused') => void;
+    hasExecutionStarted: boolean;
+    setExecutionStarted: (started: boolean) => void;
 
     // Session State
     currentSessionId: string | null;
@@ -120,6 +128,7 @@ interface OuroborosState {
     livingConstitution: LivingConstitutionState;
     projectInsights: string; // V2.99 Mid-Term Memory
     updateLivingConstitution: (updates: Partial<LivingConstitutionState>) => void;
+    setProjectModeOverride: (mode: ProjectMode) => boolean;
     addConstitutionConstraint: (constraint: string) => void;
     addConstitutionDecision: (decision: string) => void;
     addConstitutionWarning: (warning: string) => void;
@@ -143,6 +152,8 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
     // Status
     status: 'idle',
     setStatus: (status) => set({ status }),
+    hasExecutionStarted: false,
+    setExecutionStarted: (started) => set({ hasExecutionStarted: started }),
 
     // Session State
     currentSessionId: null,
@@ -164,7 +175,7 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
     settings: {
         visualProfile: 'CYBERPUNK', // Default to V3.0 aesthetic
         reduceMotion: false,
-        model: 'gemini-2.0-flash-exp', // Updated default
+        model: 'gemini-2.5-pro', // Quality-first default
         concurrency: 1,
         rpm: 10,
         rpd: 1500, // Updated default
@@ -183,8 +194,8 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         model_manifestation: '',
         // V2.99: Model settings for new roles (Empty = inherit from global 'model' setting)
         model_antagonist: '', // High-reasoning model for hostile audit (leave empty to use global default)
-        model_reflexion: '', // Fast/cheap model for self-critique (leave empty to use global default)
-        model_compiler: '', // Model for Lossless Compiler (leave empty to use global default)
+        model_reflexion: 'gemini-2.5-pro', // Quality-first default for retry/repair
+        model_compiler: 'gemini-2.5-pro', // Quality-first default
         localBaseUrl: 'http://localhost:11434/v1',
         localModelId: 'gemma3:12b',
         localSmallModelId: 'gemma3:4b',
@@ -194,9 +205,28 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         // V2.99 Final Features
         disabledRedFlags: [],
         enableAdaptiveRouting: false,
-        enablePredictiveCostScaling: false,
+        enablePredictiveCostScaling: true,
+        autoTurboMode: false,
+        decompositionStrategy: 'fixpoint_recursive',
+        smallModelCompatibilityMode: 'auto',
+        outputProfile: 'lossless_only',
+        creativeOutputTarget: 'auto',
+        enableSoulForNonCreativeModes: false,
+        guidedRepairMode: 'auto',
+        tribunalStrictnessProfile: 'balanced',
+        specialistContextMode: 'top_k_relevant_bricks',
+        specialistContextTopK: 6,
+        specialistContextBudgetChars: 32000,
+        executionStrategy: 'linear',
+        autoBranchCouplingThreshold: 0.22,
+        enableDependencyEnrichment: true,
     },
-    updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
+    updateSettings: (newSettings) => set((state) => ({
+        settings: {
+            ...state.settings,
+            ...normalizeSettingsPatch(newSettings || {})
+        }
+    })),
 
     // Usage Metrics
     usageMetrics: {},
@@ -328,6 +358,26 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
         }
     })),
 
+    setProjectModeOverride: (mode) => {
+        const state = get();
+        if (state.hasExecutionStarted) {
+            return false;
+        }
+
+        set((current) => ({
+            livingConstitution: {
+                ...current.livingConstitution,
+                mode,
+                modeSource: 'user_override',
+                modeConfidence: 1,
+                modeReasoning: 'Mode manually selected by user before execution start.',
+                lastUpdated: Date.now()
+            }
+        }));
+
+        return true;
+    },
+
     addConstitutionConstraint: (constraint) => set((state) => ({
         livingConstitution: {
             ...state.livingConstitution,
@@ -371,6 +421,7 @@ export const useOuroborosStore = create<OuroborosState>((set, get) => ({
     // Reset
     resetSession: () => set({
         status: 'idle',
+        hasExecutionStarted: false,
         documentContent: '', // Wipe Prima Materia
         manifestation: null, // Wipe Manifestation
         projectPlan: [],

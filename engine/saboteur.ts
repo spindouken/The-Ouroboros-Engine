@@ -20,7 +20,7 @@
 
 import { extractWithPreference } from '../utils/safe-json';
 import { AtomicTask, CouncilProposal } from './prism-controller';
-import { Constitution } from './genesis-protocol';
+import { Constitution, ProjectMode } from './genesis-protocol';
 
 /**
  * Gap identified by the Saboteur
@@ -83,6 +83,95 @@ const DOMAIN_CHECKLISTS: Record<string, string[]> = {
 };
 
 /**
+ * Mode-specific completeness checklist (Task 14.1)
+ */
+export const MODE_CHECKLISTS: Record<ProjectMode, string[]> = {
+    software: ['authentication', 'database', 'api', 'deployment', 'error_handling', 'logging', 'testing'],
+    scientific_research: ['literature_review', 'hypothesis', 'methodology', 'data_collection', 'analysis_plan', 'limitations', 'ethical_considerations', 'reproducibility'],
+    legal_research: ['issue_identification', 'rule_statement', 'precedent_analysis', 'counterarguments', 'policy_considerations', 'conclusion', 'citations', 'jurisdiction_check'],
+    creative_writing: ['premise', 'protagonist_arc', 'antagonist_motivation', 'theme', 'structure', 'climax', 'resolution', 'character_consistency', 'world_rules'],
+    general: ['requirements', 'constraints', 'validation', 'error_handling', 'testing', 'documentation']
+};
+
+const ASPECT_PATTERNS: Record<string, string[]> = {
+    authentication: ['auth', 'authentication', 'login', 'sign in', 'password', 'credential', 'jwt', 'oauth', 'session'],
+    authorization: ['authorization', 'permission', 'role', 'access control', 'rbac', 'authorize'],
+    error_handling: ['error handling', 'error', 'exception', 'catch', 'try', 'failure', 'fallback'],
+    input_validation: ['input validation', 'validat', 'sanitiz', 'schema', 'zod', 'yup', 'check input'],
+    logging: ['logging', 'log', 'trace', 'debug', 'monitor', 'audit'],
+    testing: ['testing', 'test', 'spec', 'jest', 'vitest', 'unit', 'integration', 'e2e'],
+    security: ['security', 'secur', 'encrypt', 'hash', 'csrf', 'xss', 'injection', 'https'],
+    documentation: ['documentation', 'document', 'readme', 'api doc', 'swagger', 'openapi'],
+    deployment: ['deployment', 'deploy', 'ci/cd', 'pipeline', 'docker', 'kubernetes', 'vercel', 'netlify'],
+    database: ['database', 'db', 'sql', 'postgres', 'mongo', 'redis', 'schema'],
+    api: ['api', 'endpoint', 'rest', 'graphql', 'route'],
+    frontend: ['frontend', 'ui', 'component', 'page', 'view', 'style', 'css', 'react', 'vue'],
+    rate_limiting: ['rate limiting', 'rate limit', 'throttl', 'quota'],
+    monitoring: ['monitoring', 'monitor', 'metric', 'alert', 'health check'],
+    literature_review: ['literature review', 'systematic review', 'bibliography', 'related work', 'sources'],
+    hypothesis: ['hypothesis', 'hypotheses', 'research question'],
+    methodology: ['methodology', 'methods', 'study design', 'experimental design'],
+    data_collection: ['data collection', 'sampling', 'dataset gathering', 'data acquisition'],
+    analysis_plan: ['analysis plan', 'statistical analysis', 'analysis strategy'],
+    limitations: ['limitations', 'threats to validity', 'caveats'],
+    ethical_considerations: ['ethical considerations', 'ethics', 'irb', 'consent', 'bias'],
+    reproducibility: ['reproducibility', 'replication', 'reproduce', 'open data', 'code availability'],
+    issue_identification: ['issue identification', 'legal issue', 'issues presented'],
+    rule_statement: ['rule statement', 'legal rule', 'applicable law'],
+    precedent_analysis: ['precedent analysis', 'case law', 'precedent', 'holding'],
+    counterarguments: ['counterarguments', 'counterargument', 'opposing argument'],
+    policy_considerations: ['policy considerations', 'policy rationale', 'public policy'],
+    conclusion: ['conclusion', 'closing analysis', 'final determination'],
+    citations: ['citation', 'citations', 'bluebook', 'case citation', 'statute citation'],
+    jurisdiction_check: ['jurisdiction', 'venue', 'applicable jurisdiction'],
+    premise: ['premise', 'story premise', 'core concept'],
+    protagonist_arc: ['protagonist arc', 'character arc', 'hero arc'],
+    antagonist_motivation: ['antagonist motivation', 'villain motivation', 'opposition motive'],
+    theme: ['theme', 'thematic', 'message'],
+    structure: ['structure', 'act structure', 'plot structure', 'beat sheet'],
+    climax: ['climax', 'final confrontation', 'peak conflict'],
+    resolution: ['resolution', 'denouement', 'ending'],
+    character_consistency: ['character consistency', 'voice consistency', 'character continuity'],
+    world_rules: ['world rules', 'worldbuilding rules', 'setting constraints'],
+    requirements: ['requirements', 'requirement', 'acceptance criteria'],
+    constraints: ['constraints', 'constraint', 'limitations'],
+    validation: ['validation', 'verify', 'verification', 'validate'],
+    performance: ['performance', 'latency', 'throughput', 'scalability']
+};
+
+function normalizeAspectKey(aspect: string): string {
+    return aspect.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+export function getAspectPatternsForChecklist(aspect: string): string[] {
+    const key = normalizeAspectKey(aspect);
+    const patterns = ASPECT_PATTERNS[key];
+    if (patterns && patterns.length > 0) {
+        return patterns;
+    }
+
+    const fallback = aspect.toLowerCase().replace(/_/g, ' ');
+    return [fallback];
+}
+
+/**
+ * Detect missing aspects for a given mode checklist.
+ * Used by property tests and Task 15 integration.
+ */
+export function detectMissingModeAspects(
+    tasks: Array<Pick<AtomicTask, 'title' | 'instruction'>>,
+    mode: ProjectMode
+): string[] {
+    const checklist = MODE_CHECKLISTS[mode] || MODE_CHECKLISTS.general;
+    const taskText = tasks.map(t => `${t.title} ${t.instruction}`).join(' ').toLowerCase();
+
+    return checklist.filter(aspect => {
+        const patterns = getAspectPatternsForChecklist(aspect);
+        return !patterns.some(pattern => taskText.includes(pattern));
+    });
+}
+
+/**
  * The Saboteur - Red Team Stress Tester
  */
 export class Saboteur {
@@ -142,7 +231,8 @@ export class Saboteur {
             result.gapsIdentified.push(...llmGaps);
 
             // Phase 2: Domain completeness check (rule-based)
-            const domainGaps = this.runDomainCompletenessCheck(tasks, constitution);
+            const mode: ProjectMode = constitution?.mode || 'software';
+            const domainGaps = this.runDomainCompletenessCheck(tasks, mode);
             result.gapsIdentified.push(...domainGaps);
 
             // Phase 3: Dependency analysis (rule-based)
@@ -186,6 +276,9 @@ export class Saboteur {
         const constraintContext = constitution
             ? `Constraints: ${constitution.constraints.map(c => c.description).join(', ')}`
             : '';
+        const mode = constitution?.mode || 'software';
+        const modeGapLens = this.getModeSpecificGapLens(mode);
+        const modeGuardrails = this.getModePromptGuardrails(mode);
 
         const prompt = `
 You are THE SABOTEUR - a hostile Red Team agent. Your job is to BREAK this plan by finding what's missing.
@@ -198,6 +291,7 @@ ${userGoal}
 PROJECT CONSTITUTION:
 """
 Domain: ${constitution?.domain || 'Unknown'}
+Project Mode: ${mode}
 ${constraintContext}
 """
 
@@ -209,11 +303,10 @@ ${taskList}
 YOUR MISSION: Find the GAPS. What's missing? What will cause this project to FAIL?
 
 Think like an attacker:
-1. What requirements did they forget?
-2. What edge cases are unhandled?
-3. What security holes exist?
-4. What dependencies are assumed but not created?
-5. What happens when things go wrong?
+${modeGapLens}
+
+MODE GUARDRAILS:
+${modeGuardrails}
 
 Return YAML array of 3-5 identified gaps (or fewer if plan is solid):
 
@@ -263,20 +356,12 @@ DO NOT make up fake gaps - only report REAL missing pieces.
      */
     private runDomainCompletenessCheck(
         tasks: AtomicTask[],
-        constitution: Constitution | null
+        mode: ProjectMode
     ): IdentifiedGap[] {
         // █ ANCHOR 5.3: Phase 2 - Domain Knowledge Check
         const gaps: IdentifiedGap[] = [];
-        const domain = constitution?.domain?.toLowerCase() || 'general';
-
-        // Determine which checklist to use
-        let checklist = DOMAIN_CHECKLISTS['general'];
-        for (const [key, items] of Object.entries(DOMAIN_CHECKLISTS)) {
-            if (domain.includes(key) || key === 'general') {
-                checklist = items;
-                break;
-            }
-        }
+        const checklist = MODE_CHECKLISTS[mode] || MODE_CHECKLISTS.general;
+        const modeLabel = mode.replace(/_/g, ' ');
 
         // Check which aspects are covered
         const taskText = tasks.map(t => `${t.title} ${t.instruction}`).join(' ').toLowerCase();
@@ -284,16 +369,21 @@ DO NOT make up fake gaps - only report REAL missing pieces.
         for (const aspect of checklist) {
             const aspectPatterns = this.getAspectPatterns(aspect);
             const isCovered = aspectPatterns.some(pattern => taskText.includes(pattern));
+            const aspectLabel = aspect.replace(/_/g, ' ');
+            const severity: IdentifiedGap['severity'] =
+                aspect === 'error_handling' || aspect === 'citations' || aspect === 'methodology'
+                    ? 'major'
+                    : 'minor';
 
             if (!isCovered) {
                 gaps.push({
                     id: `domain_gap_${aspect.replace(/\s+/g, '_')}`,
-                    severity: aspect === 'error handling' || aspect === 'security' ? 'major' : 'minor',
+                    severity,
                     category: 'missing_requirement',
-                    title: `Missing: ${aspect.charAt(0).toUpperCase() + aspect.slice(1)}`,
-                    description: `The task list does not appear to cover "${aspect}" which is typically required for ${domain} projects.`,
+                    title: `Missing: ${aspectLabel.charAt(0).toUpperCase() + aspectLabel.slice(1)}`,
+                    description: `The task list does not appear to cover "${aspectLabel}" which is typically required for ${modeLabel} projects.`,
                     affectedTasks: [],
-                    suggestedFix: `Add a task to handle ${aspect}`
+                    suggestedFix: `Add a task to handle ${aspectLabel}`
                 });
             }
         }
@@ -305,24 +395,7 @@ DO NOT make up fake gaps - only report REAL missing pieces.
      * Get search patterns for domain aspects
      */
     private getAspectPatterns(aspect: string): string[] {
-        const patterns: Record<string, string[]> = {
-            'authentication': ['auth', 'login', 'sign in', 'password', 'credential', 'jwt', 'oauth', 'session'],
-            'authorization': ['permission', 'role', 'access control', 'rbac', 'authorize'],
-            'error handling': ['error', 'exception', 'catch', 'try', 'failure', 'fallback'],
-            'input validation': ['validat', 'sanitiz', 'schema', 'zod', 'yup', 'check input'],
-            'logging': ['log', 'trace', 'debug', 'monitor', 'audit'],
-            'testing': ['test', 'spec', 'jest', 'vitest', 'unit', 'integration', 'e2e'],
-            'security': ['secur', 'encrypt', 'hash', 'csrf', 'xss', 'injection', 'https'],
-            'documentation': ['document', 'readme', 'api doc', 'swagger', 'openapi'],
-            'deployment': ['deploy', 'ci/cd', 'pipeline', 'docker', 'kubernetes', 'vercel', 'netlify'],
-            'database': ['database', 'db', 'sql', 'postgres', 'mongo', 'redis', 'schema'],
-            'api': ['api', 'endpoint', 'rest', 'graphql', 'route'],
-            'frontend': ['ui', 'component', 'page', 'view', 'style', 'css', 'react', 'vue'],
-            'rate limiting': ['rate limit', 'throttl', 'quota'],
-            'monitoring': ['monitor', 'metric', 'alert', 'health check']
-        };
-
-        return patterns[aspect] || [aspect];
+        return getAspectPatternsForChecklist(aspect);
     }
 
     /**
@@ -400,6 +473,7 @@ DO NOT make up fake gaps - only report REAL missing pieces.
         constitution: Constitution | null
     ): Promise<MissingBrick[]> {
         const bricks: MissingBrick[] = [];
+        const mode = constitution?.mode || 'software';
 
         // Filter to critical and major gaps only
         const significantGaps = gaps.filter(g => g.severity === 'critical' || g.severity === 'major');
@@ -412,6 +486,10 @@ DO NOT make up fake gaps - only report REAL missing pieces.
         // Generate bricks for each gap
         const prompt = `
 You are THE SABOTEUR. You've identified gaps in a project plan. Now generate the MISSING TASKS to fill them.
+
+PROJECT MODE: ${mode}
+MODE GUARDRAILS:
+${this.getModePromptGuardrails(mode)}
 
 IDENTIFIED GAPS:
 ${significantGaps.map((g, i) => `${i + 1}. [${g.severity.toUpperCase()}] ${g.title}: ${g.description}`).join('\n')}
@@ -449,30 +527,133 @@ Make tasks ATOMIC (single action, single deliverable).
             const data = extracted.data || [];
 
             if (data.length > 0) {
-                for (const brick of data) {
+                for (let i = 0; i < data.length; i++) {
+                    const brick = data[i];
+                    const relatedGap = significantGaps[i];
+                    const safeInstruction = this.enforceModeInstruction(
+                        brick.instruction,
+                        brick.title,
+                        mode,
+                        relatedGap
+                    );
+
                     bricks.push({
                         ...brick,
-                        id: brick.id || `missing_brick_${crypto.randomUUID().substring(0, 8)}`
+                        id: brick.id || `missing_brick_${crypto.randomUUID().substring(0, 8)}`,
+                        instruction: safeInstruction
                     });
                 }
+            } else {
+                // If parsing fails silently (no throw), inject deterministic fallback bricks.
+                bricks.push(...this.buildFallbackBricks(significantGaps, mode));
             }
         } catch (error) {
             console.error('[Saboteur] Failed to generate missing bricks:', error);
 
             // Fallback: generate simple bricks from gap suggestions
-            for (const gap of significantGaps) {
-                bricks.push({
-                    id: `missing_brick_${gap.id}`,
-                    title: gap.suggestedFix.substring(0, 50),
-                    instruction: gap.suggestedFix,
-                    priority: gap.severity === 'critical' ? 'critical' : 'high',
-                    reason: gap.description,
-                    complexity: 5
-                });
-            }
+            bricks.push(...this.buildFallbackBricks(significantGaps, mode));
         }
 
         return bricks;
+    }
+
+    private getModePromptGuardrails(mode: ProjectMode): string {
+        const guardrails: Record<ProjectMode, string> = {
+            software: '- Software architecture terms are allowed.\n- Avoid implementation code.',
+            scientific_research: '- Do NOT introduce software engineering tasks unless explicitly requested.\n- Focus on evidence, methods, limitations, and reproducibility.',
+            legal_research: '- Do NOT introduce software engineering tasks unless explicitly requested.\n- Focus on issues, rules, precedent, citations, and jurisdiction framing.',
+            creative_writing: '- Do NOT introduce software engineering tasks unless explicitly requested.\n- Focus on narrative structure, arcs, beats, and thematic cohesion.',
+            general: '- Prefer domain-neutral planning.\n- Avoid unnecessary software implementation tasks unless explicitly requested.'
+        };
+
+        return guardrails[mode] || guardrails.general;
+    }
+
+    private getModeSpecificGapLens(mode: ProjectMode): string {
+        const lenses: Record<ProjectMode, string> = {
+            software: `1. What requirements did they forget?
+2. What edge cases are unhandled?
+3. What security holes exist?
+4. What dependencies are assumed but not created?
+5. What happens when things go wrong?`,
+            scientific_research: `1. Which evidence coverage areas are missing?
+2. Which methodology or reproducibility controls are missing?
+3. Which limitations or bias checks are missing?
+4. Which citation/source-quality checks are missing?
+5. What invalidates conclusions if unaddressed?`,
+            legal_research: `1. Which legal issues are not framed clearly?
+2. Which governing rules or precedent checks are missing?
+3. Which citation or jurisdiction checks are missing?
+4. Which counterarguments are missing?
+5. What analysis failures occur if these gaps remain?`,
+            creative_writing: `1. Which story structure elements are missing?
+2. Which character or motivation arcs are under-defined?
+3. Which thematic or world-rule consistency checks are missing?
+4. Which turning points/climax/resolution steps are missing?
+5. What narrative failures occur if these gaps remain?`,
+            general: `1. Which requirements are missing?
+2. Which assumptions and constraints are missing?
+3. Which dependency and risk checks are missing?
+4. Which validation criteria are missing?
+5. What breaks if these are not added?`
+        };
+
+        return lenses[mode] || lenses.general;
+    }
+
+    private enforceModeInstruction(
+        instruction: string,
+        title: string,
+        mode: ProjectMode,
+        relatedGap?: IdentifiedGap
+    ): string {
+        if (mode === 'software') {
+            return instruction;
+        }
+
+        const softwareSignal =
+            /(\bapi\b|\bendpoint\b|\bdatabase\b|\bschema\b|\breact\b|\btypescript\b|\bjavascript\b|\bbackend\b|\bfrontend\b|\bmiddleware\b|\bdeploy\b|\bdevops\b|\bcode\b|\bclass\b|\bfunction\b)/i;
+        const text = `${title || ''} ${instruction || ''}`;
+        if (!softwareSignal.test(text)) {
+            return instruction;
+        }
+
+        return this.buildModeSafeFallbackInstruction(relatedGap, mode);
+    }
+
+    private buildModeSafeFallbackInstruction(gap: IdentifiedGap | undefined, mode: ProjectMode): string {
+        const fallbackTitle = gap?.title || 'address the identified gap';
+        const fallbackFix = gap?.suggestedFix || 'create a single-step task that closes this gap';
+
+        const templates: Record<ProjectMode, string> = {
+            software: fallbackFix,
+            scientific_research: `Define an evidence-based research task to ${fallbackTitle.toLowerCase()}, including citation standards and a reproducibility check.`,
+            legal_research: `Define a legal analysis task to ${fallbackTitle.toLowerCase()}, including citation quality and jurisdiction checks.`,
+            creative_writing: `Define a narrative-structure task to ${fallbackTitle.toLowerCase()}, ensuring structural clarity and arc consistency.`,
+            general: `Define a domain-appropriate planning task to ${fallbackTitle.toLowerCase()} with clear validation criteria.`
+        };
+
+        return templates[mode] || templates.general;
+    }
+
+    /**
+     * Deterministic fallback brick generation when LLM output is unavailable or unparsable.
+     */
+    private buildFallbackBricks(significantGaps: IdentifiedGap[], mode: ProjectMode): MissingBrick[] {
+        return significantGaps.map((gap) => {
+            const normalizedGapId = gap.id.replace(/^domain_gap_/, '');
+            const inferredId = `missing_brick_${normalizedGapId}`;
+            const title = gap.title.replace(/^Missing:\s*/i, '').trim() || gap.suggestedFix.substring(0, 50);
+
+            return {
+                id: inferredId,
+                title,
+                instruction: this.buildModeSafeFallbackInstruction(gap, mode),
+                priority: gap.severity === 'critical' ? 'critical' : 'high',
+                reason: gap.description,
+                complexity: 5
+            };
+        });
     }
 
     /**

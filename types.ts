@@ -10,6 +10,7 @@
 
 export type NodeStatus =
   | 'pending'
+  | 'queued'
   | 'running'
   | 'critiquing'
   | 'synthesizing'   // Alchemist (Compiler) synthesis
@@ -45,6 +46,43 @@ export type NodeType =
 export type AppMode = 'refine' | 'plan';
 
 export type VisualProfile = 'MINIMAL' | 'CYBERPUNK' | 'LABORATORY';
+export type GuidedRepairMode = 'off' | 'auto' | 'always';
+export type TribunalStrictnessProfile = 'balanced' | 'strict' | 'local_small';
+export type SpecialistContextMode =
+  | 'constitution_deltas'
+  | 'dependency_artifacts'
+  | 'top_k_relevant_bricks'
+  | 'full_verified_bricks';
+
+export interface NodeAttemptRecord {
+  attemptNumber: number;
+  startedAt: number;
+  completedAt?: number;
+  modelUsed?: string;
+  temperature?: number;
+  promptUsed?: string;
+  rawResponse?: string;
+  artifactPreview?: string;
+  reflexionApplied?: boolean;
+  surveyPassed?: boolean;
+  redFlags?: string[];
+  tribunal?: {
+    verdict: 'pass' | 'fail';
+    reasoning?: string;
+    confidence?: number;
+    evidenceCount?: number;
+    suggestionCount?: number;
+    outcome?: string;
+  };
+  outcome:
+  | 'running'
+  | 'verified'
+  | 'retry_scheduled'
+  | 'tribunal_rejected'
+  | 'survey_rejected'
+  | 'failed';
+  notes?: string;
+}
 
 
 // --- EXTENDED NODE MODEL (Requirements 1.1, 1.2) ---
@@ -103,6 +141,7 @@ export interface Node {
     timestamp?: number;
     modelUsed?: string;
     executionTimeMs?: number;
+    attempts?: NodeAttemptRecord[];
   };
 }
 
@@ -286,6 +325,19 @@ export interface VotingState {
 
 // --- EXTENDED APP SETTINGS ---
 
+export type ProjectModeSetting =
+  | 'software'
+  | 'scientific_research'
+  | 'legal_research'
+  | 'creative_writing'
+  | 'general';
+
+export type DecompositionStrategy = 'off' | 'bounded' | 'fixpoint_recursive';
+export type SmallModelCompatibilityMode = 'auto' | 'force_off';
+export type ExecutionStrategy = 'linear' | 'dependency_parallel' | 'auto_branch_parallel';
+export type OutputProfile = 'lossless_only' | 'lossless_plus_soul';
+export type CreativeOutputTarget = 'auto' | 'bible' | 'beat_sheet' | 'screenplay';
+
 export interface AppSettings {
   visualProfile?: VisualProfile; // V3.0 Skin Engine
   reduceMotion?: boolean;        // Accessibility
@@ -332,6 +384,7 @@ export interface AppSettings {
   model_genesis?: string;        // Model for Genesis Protocol
   model_fast?: string;           // Generic model for low-latency tasks
   model_project_insight?: string; // V2.99: Model for Project Insight (Synthesizer)
+  defaultProjectMode?: ProjectModeSetting; // Preferred default mode for new sessions (hint for Genesis)
 
   // Local LLM Config
   localBaseUrl?: string;
@@ -354,11 +407,24 @@ export interface AppSettings {
   turboMode?: boolean;               // Global force enable
   autoTurboMode?: boolean;           // Default: true (Smart enable)
   turboComplexityThreshold?: number; // Default: 5 (Tasks < this are Turbo)
+  smallModelCompatibilityMode?: SmallModelCompatibilityMode; // Controls lite prompting path (auto for local-small only, or force off)
+  outputProfile?: OutputProfile; // Canonical-only or canonical + soul projection
+  creativeOutputTarget?: CreativeOutputTarget; // Creative-writing target structure
+  enableSoulForNonCreativeModes?: boolean; // Safety gate: keep non-creative defaults unchanged
+  guidedRepairMode?: GuidedRepairMode; // Controls duel repair callback path
+  tribunalStrictnessProfile?: TribunalStrictnessProfile; // Tribunal hard/soft fail strictness profile
+  specialistContextMode?: SpecialistContextMode; // Context strategy for specialist prompts
+  specialistContextTopK?: number; // Used by top_k_relevant_bricks
+  specialistContextBudgetChars?: number; // Approximate prompt budget for extra context
+  executionStrategy?: ExecutionStrategy; // Runtime node scheduling policy
+  autoBranchCouplingThreshold?: number; // Max lexical coupling for auto branch parallel batches (0..1)
+  enableDependencyEnrichment?: boolean; // Infer missing task dependencies before execution graph build
 
   // V2.99 Prism Decomposition Settings
-  maxAtomicTasks?: number;           // Default: 20, Range: 5-50
+  decompositionStrategy?: DecompositionStrategy; // Default: 'bounded'
+  maxAtomicTasks?: number;           // Optional cap, Range: 5-50. Undefined means no explicit cap.
   maxDecompositionPasses?: number;   // Default: 3, Range: 1-10
-  enableRecursiveDecomposition?: boolean; // Default: false
+  enableRecursiveDecomposition?: boolean; // @deprecated legacy toggle, use decompositionStrategy
   maxCouncilSize?: number;           // Default: 5, Range: 3-15
   allowCodeGeneration?: boolean;     // Default: false (Experimental Force)
 

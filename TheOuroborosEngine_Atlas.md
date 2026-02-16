@@ -1,10 +1,30 @@
 # ♾️ Ouroboros V2.99: The Integrated Master Architecture
 **Subtitle:** The Pragmatic Brick Factory
-**Status:** Active Source of Truth (Updated Jan 19, 2026)
+**Status:** Active Source of Truth with Reality Sync Addendum (Code-verified Feb 16, 2026)
 **Philosophy:** Adversarial Engineering & Industrialized Truth
 
 > **🔖 Note:** Features marked with `[Future Enhancement]` are deferred to V3.0. See `V3.0_Enhancement_Task_List.md`.
 > **🔖 Note:** See `V2.99_Refinement_Strategy.md` for the "Blackboard Shift" protocol updates being implemented.
+
+## Reality Sync Addendum (Code-verified 2026-02-16)
+
+If this addendum conflicts with older text below, the addendum is authoritative.
+
+- Active now in code:
+  - Antagonist duel validation pipeline with guided repair controls (default path).
+  - Multi-domain mode propagation and mode-aware specialist/saboteur/surveyor/antagonist prompts.
+  - Decomposition strategy (`off | bounded | fixpoint_recursive`) plus execution strategy (`linear` default, optional parallel modes).
+  - Dependency enrichment, attempt history telemetry, and Node Inspector transparency improvements.
+  - Optional soul-document layer on top of canonical lossless manifests.
+- Partial or legacy:
+  - Multi-round voting module is retained for compatibility but not used by default runtime orchestration.
+  - `JsonRetryDialog.tsx` exists, but JSON retry behavior is currently settings/runtime driven (`jsonRetryMode`).
+  - Vector-embedding retrieval remains deferred; current Genesis/seed retrieval is Dexie keyword/tag matching.
+- Future/deferred:
+  - Phases 11-15 in `.kiro/specs/multi-domain-expansion/tasks.md` are planned and mostly not implemented by default.
+  - MCP/tooling/browser expansion remains low-priority and off-by-default design work.
+
+---
 
 ## System Overview
 The "Soul" of Ouroboros V2.99 is the rejection of "AI as Art" in favor of **"AI as Engineering."** It acknowledges that LLMs are probabilistic engines prone to the "illusion of thinking" and counters this with rigorous statistical process control.
@@ -43,7 +63,7 @@ A robust reliability layer ensuring 99.9% uptime.
     *   **Local (Cost-Free):** Ollama (Qwen, Llama, Mistral, etc.)
 *   **Local-First:** Prioritizes local JSON parsing to prevent API-induced data malformation.
 *   **V2.99 Implementation Notes:**
-    *   ✅ **Granular Model Defaults Fixed:** All role-specific model settings (`model_reflexion`, `model_antagonist`, etc.) now default to empty strings, causing proper fallback to Global Default.
+    *   [PARTIAL] **Granular Model Defaults:** Some role-specific model settings inherit global default when empty (`model_antagonist` etc.), but others still have explicit defaults (e.g., `model_reflexion`, `model_compiler`) in store defaults.
     *   ✅ **SecurityPatcher Dynamic Model:** `updateConfig()` method added to ensure Security Patcher respects user's model selection.
     *   ✅ **Global Token Tracking:** Implemented `onUsageCallback` pattern in `UnifiedLLMClient` to capture tokens from *all* models (OpenAI, Gemini, Local, Groq) at the source. Metrics persist to `projects` DB and display in the **Project Bible** ("Efficiency Report").
     *   ✅ **Local Model Support:**
@@ -51,7 +71,7 @@ A robust reliability layer ensuring 99.9% uptime.
         *   **Dual Engine Routing (Local):** Added `local-custom` (standard) and `local-custom-small` (fast) model IDs.
         *   **The "Leviathan" Sandwich:** Small local models (e.g., `gemma:2b`) automatically receive `Leviathan.sandwich()` constraint repetition to improve adherence. (Verified: `engine/leviathan.ts`, `UnifiedLLMClient.ts`)
         *   **JSON Mode Enforcement:** Local small models force `response_format: { type: "json_object" }` to prevent markdown bleed.
-    *   ✅ **Dual-Interface Adapter:** The `UnifiedLLMClient` now exposes a hybrid interface (`ai.generateContent` AND `ai.models.generateContent`) to maintain backward compatibility with legacy agents (Genesis) while supporting new Prism architecture.
+    *   [PARTIAL] **Dual-Interface Adapter:** The hybrid `generateContent` + `models.generateContent` adapter is implemented in `engine/OuroborosEngine.ts` as `llmAdapter` for subsystem compatibility; `UnifiedLLMClient` itself primarily exposes `models.generateContent`.
 
 ### **2.2 The Manifestation Log (Visual Interface)**
 The user's window into the factory floor.
@@ -131,7 +151,7 @@ The user's window into the factory floor.
     *   The user is presented with the Council list and tasks as buttons in the UI and can toggle members/tasks **ON/OFF**.
 *   **V2.99 Implementation Notes:**
     *   ✅ **Fallback Task Generation:** If Prism returns 0 tasks (JSON parse failure), the system retries with higher temperature (0.8), then generates basic fallback tasks.
-    *   ✅ **JSON Retry UI:** User can trigger manual JSON retry for failed nodes via `JsonRetryDialog.tsx`.
+    *   [LEGACY/PARTIAL] **JSON Retry UI:** `JsonRetryDialog.tsx` exists, but active retry behavior is currently driven by Prism/runtime `jsonRetryMode` settings rather than a wired manual dialog flow.
     *   ✅ **Atomicity Validator:** Implemented robust validation logic (`validateAtomicity()`) that rejects tasks containing:
         *   **Multiple Action Verbs:** "Create AND validate" (Non-atomic).
         *   **Compound Conjunctions:** "and", "then", "also".
@@ -217,7 +237,7 @@ The user's window into the factory floor.
     *   **Golden Standards Seeding:** On first boot, the system pre-loads `seed_skills.json` (The "Teflon Stack") to ensure Senior-level competence from Day 1.
 *   **2. The Project Insight Layer (Mid-Term Memory):** `[ACTIVE / V2.99 Implemented]`
     *   **Mechanism:** Every 5 verified Bricks, the `ProjectInsightManager` runs a background "Reflection Pass."
-    *   **Action:** Synthesizes high-level observations (e.g., "We are avoiding 3rd party UI libraries") into `project_insights.md`.
+    *   [PARTIAL] **Action:** Synthesizes high-level observations into a markdown insights payload managed by runtime/store and persisted with project/session state (not currently written as a standalone `project_insights.md` file in repo).
     *   **Injection:** This file is fed into every Specialist's context (via prompt injection) to prevent style drift and enforce architectural inconsistencies.
     *   **Reflexion Loop:** Now Constitution-aware using these insights.
 *   **3. The Pre-Flight Check (Injection):**
@@ -253,7 +273,7 @@ The user's window into the factory floor.
 *   **Hardcode Flags:**
     *   `enableRedFlagging = true` (Safety is not optional).
     *   `enableAgentMemory = true` (Learning is not optional).
-    *   `enableMultiRoundVoting = true` (Renamed to "Antagonist Protocol").
+    *   [LEGACY WORDING] `enableAntagonistProtocol = true` is the active setting; `enableMultiRoundVoting` remains deprecated/backward-compatibility naming.
 *   **Remove Deprecated Settings:**
     *   `initialJudgeCount` (Replaced by Antagonist Duel).
     *   `maxMicroAgentDepth` (Architectural constant, not user choice).
@@ -287,7 +307,7 @@ The user's window into the factory floor.
 *   **Solution:** "Think in Markdown, Commit in YAML."
     1.  **Thinking Phase:** Agents write reasoning in Natural Language Markdown.
     2.  **Commit Phase:** At the end, agents output a delimited ` ```yaml ` block with structured data.
-    3.  **Storage:** Merged into `db.blackboard` (Dexie.js) instead of passed linearly.
+    3.  **Storage:** Merged into project/session state (`projects.livingConstitution` + verified-brick flows) in Dexie-backed persistence; there is no dedicated `db.blackboard` table in current schema.
 *   **Status:** ✅ **IMPLEMENTED**
     *   `utils/safe-json.ts` - Added `extractYaml`, `parseYamlText`, `safeYamlParse` functions (Verified)
     *   `engine/blackboard-delta.ts` - YAML-first parsing with JSON fallback (Verified)
@@ -369,5 +389,18 @@ The user's window into the factory floor.
     *   `package.json` - Added `jszip` dependency (`^3.10.1`)
 
 ---
-*Atlas Updated: Jan 24, 2026*
+## Part 8: Post-Jan Implementation Reality (Tasks + Code Cross-Reference)
+
+- [ACTIVE] Phase 7-10 trajectory is reflected in code: decomposition hardening, retry/tribunal transparency, scheduling controls, and canonical+soul output pipeline.
+- [ACTIVE] Settings-gated controls now exist for decomposition strategy, execution strategy, dependency enrichment, output profile, strictness, guided repair, and compatibility mode.
+- [CHECKPOINT PENDING] Several task checkpoints are still open (for example Phases 9-10 validation gates) and should be treated as not fully production-validated yet.
+- [FUTURE/LOW PRIORITY] MCP/tool/browser/tool-market style expansions are documented in tasks as deferred and should remain off by default until security/synergy gates pass.
+
+### Future Implementation Notes (Atlas Alignment)
+
+- MCP is a protocol boundary, not an automatic compute multiplier by itself; overhead depends on enabled tools and call policy.
+- Provider-native browsing/tool use is not implicitly "on" for all model calls; it requires explicit model/provider/tool configuration and policy gates.
+- Recommended insertion point for future MCP: between orchestration planning and tool execution adapters, with append-only audit logging and strict allowlists.
+
+*Atlas Updated: Feb 16, 2026*
 

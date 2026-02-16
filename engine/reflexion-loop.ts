@@ -119,10 +119,11 @@ export class ReflexionLoop {
     async reflect(
         output: SpecialistOutput,
         atomicInstruction: string,
-        livingConstitution: string
+        livingConstitution: string,
+        priorTribunalFeedback?: string
     ): Promise<ReflexionResult> {
         // Step 1: Run the critique
-        const critique = await this.runCritique(output, atomicInstruction, livingConstitution);
+        const critique = await this.runCritique(output, atomicInstruction, livingConstitution, priorTribunalFeedback);
 
         // Step 2: Determine if repair is needed
         const needsRepair = this.shouldRepair(critique);
@@ -132,7 +133,7 @@ export class ReflexionLoop {
 
         // Step 3: If repair needed, perform Fast Repair
         if (needsRepair) {
-            repair = await this.runRepair(output, critique, atomicInstruction, livingConstitution);
+            repair = await this.runRepair(output, critique, atomicInstruction, livingConstitution, priorTribunalFeedback);
 
             if (repair.success) {
                 // Update the output with repaired artifact
@@ -161,9 +162,10 @@ export class ReflexionLoop {
     private async runCritique(
         output: SpecialistOutput,
         atomicInstruction: string,
-        livingConstitution: string
+        livingConstitution: string,
+        priorTribunalFeedback?: string
     ): Promise<CritiqueResult> {
-        const prompt = this.buildCritiquePrompt(output, atomicInstruction, livingConstitution);
+        const prompt = this.buildCritiquePrompt(output, atomicInstruction, livingConstitution, priorTribunalFeedback);
 
         const response = await this.llmClient.generateContent({
             model: this.critiqueModel,
@@ -184,9 +186,10 @@ export class ReflexionLoop {
         output: SpecialistOutput,
         critique: CritiqueResult,
         atomicInstruction: string,
-        livingConstitution: string
+        livingConstitution: string,
+        priorTribunalFeedback?: string
     ): Promise<RepairResult> {
-        const prompt = this.buildRepairPrompt(output, critique, atomicInstruction, livingConstitution);
+        const prompt = this.buildRepairPrompt(output, critique, atomicInstruction, livingConstitution, priorTribunalFeedback);
 
         const response = await this.llmClient.generateContent({
             model: this.critiqueModel, // Use same fast model for repair
@@ -206,8 +209,18 @@ export class ReflexionLoop {
     private buildCritiquePrompt(
         output: SpecialistOutput,
         atomicInstruction: string,
-        livingConstitution: string
+        livingConstitution: string,
+        priorTribunalFeedback?: string
     ): string {
+        const tribunalSection = priorTribunalFeedback
+            ? `
+## PRIOR TRIBUNAL FEEDBACK (FROM LAST FAILED ATTEMPT)
+"""
+${priorTribunalFeedback}
+"""
+`
+            : '';
+
         return `# REFLEXION SELF-CRITIQUE PROTOCOL
 
 You are reviewing your own work. Be BRUTALLY HONEST about flaws.
@@ -221,6 +234,7 @@ ${livingConstitution}
 """
 ${atomicInstruction}
 """
+${tribunalSection}
 
 ## YOUR OUTPUT TO CRITIQUE
 """
@@ -265,12 +279,22 @@ Be critical but fair. If the output is genuinely good, flaws can be "minor" leve
         output: SpecialistOutput,
         critique: CritiqueResult,
         atomicInstruction: string,
-        livingConstitution: string
+        livingConstitution: string,
+        priorTribunalFeedback?: string
     ): string {
         const flawsStr = critique.flaws
             .filter(f => f.severity === 'critical' || f.severity === 'major')
             .map((f, i) => `${i + 1}. [${f.severity.toUpperCase()}] ${f.description}\n   Fix: ${f.suggestedFix}`)
             .join('\n');
+
+        const tribunalSection = priorTribunalFeedback
+            ? `
+## PRIOR TRIBUNAL FEEDBACK (MUST BE RESOLVED)
+"""
+${priorTribunalFeedback}
+"""
+`
+            : '';
 
         return `# REFLEXION FAST REPAIR PROTOCOL
 
@@ -285,6 +309,7 @@ ${livingConstitution}
 """
 ${atomicInstruction}
 """
+${tribunalSection}
 
 ## THE FLAWED OUTPUT
 """

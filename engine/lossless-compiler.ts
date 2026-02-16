@@ -20,6 +20,8 @@
 import { LLMResponse } from './UnifiedLLMClient';
 import { VerifiedBrick } from './blackboard-delta';
 import { SecurityAddendum } from './security-patcher';
+import type { ProjectMode } from './genesis-protocol';
+import { composeSoulDocument, type SoulIntentTarget } from './soul-document-composer';
 
 // ============================================================================
 // TYPES
@@ -43,6 +45,8 @@ export interface CompilerInput {
         decisions?: string[];
         warnings?: string[];
         originalPrompt?: string;
+        mode?: ProjectMode;
+        intentTarget?: SoulIntentTarget;
     };
 }
 
@@ -65,6 +69,16 @@ export interface CompilerOutput {
 
     /** Compilation timestamp */
     compiledAt: number;
+
+    /** Canonical immutable source artifacts */
+    canonicalManifestJson: string;
+    canonicalLosslessMarkdown: string;
+
+    /** Fluent projection generated from canonical source */
+    manifestSoul: string;
+
+    /** Non-reader diagnostics for rejected/protocol artifacts */
+    diagnostics: string[];
 }
 
 export interface CompilerConfig {
@@ -76,6 +90,15 @@ export interface CompilerConfig {
 
     /** Output format */
     outputFormat: 'markdown' | 'json' | 'structured';
+
+    /** Output profile toggle (Phase 10) */
+    outputProfile?: 'lossless_only' | 'lossless_plus_soul';
+
+    /** Safety gate for non-creative modes */
+    enableSoulForNonCreativeModes?: boolean;
+
+    /** Explicit intent routing for creative mode outputs */
+    intentTarget?: SoulIntentTarget;
 }
 
 // ============================================================================
@@ -97,9 +120,19 @@ export class LosslessCompiler {
         this.config = {
             model: config.model,
             useLLMFormatting: config.useLLMFormatting ?? false,
-            outputFormat: config.outputFormat || 'markdown'
+            outputFormat: config.outputFormat || 'markdown',
+            outputProfile: config.outputProfile || 'lossless_only',
+            enableSoulForNonCreativeModes: config.enableSoulForNonCreativeModes ?? false,
+            intentTarget: config.intentTarget || 'auto'
         };
         this.llmClient = llmClient;
+    }
+
+    updateConfig(config: Partial<CompilerConfig>): void {
+        this.config = {
+            ...this.config,
+            ...config
+        };
     }
 
     /**
@@ -131,7 +164,11 @@ export class LosslessCompiler {
             projectMetadata.domain = this.scrapeDomain(verifiedBricks);
         }
 
-        // Phase 1: Pure Stitching (Lossless)
+        // Canonical artifacts are immutable source-of-truth outputs.
+        const canonicalManifestJson = this.assembleAsJson(verifiedBricks, securityAddendum, projectMetadata);
+        const canonicalLosslessMarkdown = this.assembleAsMarkdown(verifiedBricks, securityAddendum, projectMetadata);
+
+        // Legacy manifestation assembly path (kept for default/no-regression flows).
         let manifestation: string;
 
         if (this.config.outputFormat === 'json') {
@@ -145,6 +182,23 @@ export class LosslessCompiler {
         // Phase 2: Optional LLM Formatting (with strict preservation rules)
         if (this.config.useLLMFormatting && this.llmClient && this.config.model) {
             manifestation = await this.formatWithLLM(manifestation, verifiedBricks);
+        }
+
+        const soul = composeSoulDocument({
+            canonicalManifest: canonicalManifestJson,
+            mode: projectMetadata.mode,
+            intentTarget: projectMetadata.intentTarget || this.config.intentTarget || 'auto'
+        });
+
+        const canUseSoulAsPrimary =
+            this.config.outputProfile === 'lossless_plus_soul' &&
+            (
+                projectMetadata.mode === 'creative_writing' ||
+                this.config.enableSoulForNonCreativeModes
+            );
+
+        if (canUseSoulAsPrimary) {
+            manifestation = soul.manifestSoul;
         }
 
         // Verification
@@ -162,7 +216,11 @@ export class LosslessCompiler {
                 assembledCharCount,
                 preservationRatio
             },
-            compiledAt: Date.now()
+            compiledAt: Date.now(),
+            canonicalManifestJson,
+            canonicalLosslessMarkdown,
+            manifestSoul: soul.manifestSoul,
+            diagnostics: soul.diagnostics
         };
     }
 

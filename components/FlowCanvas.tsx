@@ -48,6 +48,25 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick, appMode }) 
     const store = useOuroborosStore();
 
     const filteredNodes = useMemo(() => dbNodes.filter(n => n.mode === appMode), [dbNodes, appMode]);
+    const queueMetrics = useMemo(() => {
+        const byId = Object.fromEntries(filteredNodes.map((node) => [node.id, node]));
+        let runnable = 0;
+        let blocked = 0;
+        for (const node of filteredNodes) {
+            if (node.status !== 'pending') continue;
+            const deps = Array.isArray(node.dependencies) ? node.dependencies : [];
+            const canRun = deps.every((depId) => !byId[depId] || byId[depId].status === 'complete');
+            if (canRun) runnable++;
+            else blocked++;
+        }
+
+        const queued = filteredNodes.filter((node) => node.status === 'queued').length;
+        const active = filteredNodes.filter((node) =>
+            ['running', 'planning', 'reflexion', 'synthesizing', 'auditing', 'critiquing', 'verifying', 'compiling', 'thinking', 'decomposing'].includes(node.status)
+        ).length;
+
+        return { runnable, blocked, queued, active };
+    }, [filteredNodes]);
 
     // State for System Node positions to allow responsive dragging
     const [sysNodePositions, setSysNodePositions] = useState<Record<string, { x: number, y: number }>>({});
@@ -128,7 +147,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick, appMode }) 
         // Helper to check if source/target node is running - EXPANDED LIST (Reverted Strictness)
         const activeStatuses = new Set([
             'running', 'planning', 'reflexion', 'synthesizing', 'auditing',
-            'critiquing', 'verifying', 'compiling', 'thinking'
+            'critiquing', 'verifying', 'compiling', 'thinking', 'decomposing'
         ]);
         const runningNodeIds = new Set(filteredNodes.filter(n => activeStatuses.has(n.status)).map(n => n.id));
 
@@ -326,6 +345,7 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick, appMode }) 
                     nodeColor={(n) => {
                         if (n.data.status === 'error') return '#ef4444';
                         if (n.data.status === 'complete') return '#10b981';
+                        if (n.data.status === 'queued') return '#f59e0b';
                         if (n.data.status === 'running') return '#34d399';
                         return '#065f46';
                     }}
@@ -337,9 +357,11 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeClick, appMode }) 
                 <Panel position="top-right" className="flex gap-2">
                     <div className="bg-zinc-950/80 backdrop-blur-md px-4 py-2 rounded-lg border border-emerald-500/30 text-xs text-emerald-400 font-display font-medium tracking-wide flex items-center shadow-[0_0_15px_rgba(16,185,129,0.15)]">
                         <div className="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-                        ACTIVE NODES: <span className="text-white ml-1 font-bold">
-                            {nodes.filter(n => ['thinking', 'reflexion', 'synthesizing', 'compiling', 'auditing', 'verifying', 'planning'].includes(n.data.status)).length}
-                        </span> <span className="mx-1 opacity-50">/</span> {nodes.length}
+                        ACTIVE: <span className="text-white ml-1 font-bold">{queueMetrics.active}</span>
+                        <span className="mx-2 opacity-40">|</span>
+                        QUEUED: <span className="text-amber-300 ml-1 font-bold">{queueMetrics.queued}</span>
+                        <span className="mx-2 opacity-40">|</span>
+                        BLOCKED: <span className="text-cyan-300 ml-1 font-bold">{queueMetrics.blocked}</span>
                     </div>
                     <button
                         onClick={handleAutoLayout}

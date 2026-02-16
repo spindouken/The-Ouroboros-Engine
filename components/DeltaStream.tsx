@@ -67,6 +67,7 @@ export const DeltaStream: React.FC<DeltaStreamProps> = ({ constitution, filterNo
         // 1. System/Lock Messages into Narrative
         if (content.includes('✅ SEM ACQ')) return { text: "Acquired semaphore lock. Resource secured.", highlight: false };
         if (content.includes('⏳ SEM WAIT')) return { text: "Queueing for system resources...", highlight: false };
+        if (content.includes('⏳ QUEUED')) return { text: "Node is queued and waiting for execution slot.", highlight: false };
         if (content.includes('✅ RATE ACQ')) return { text: "Rate limit check passed. Proceeding.", highlight: false };
         if (content.includes('⏳ RATE WAIT')) return { text: "Awaiting rate limit cooldown...", highlight: false };
         if (content.includes('▷ EXEC START')) {

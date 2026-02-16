@@ -18,14 +18,16 @@
  * 3. Atomicity Validation (Regex)
  */
 
-import { AgentConfig, MicroTask, NodeStatus } from '../types';
+import { AgentConfig, DecompositionStrategy, MicroTask, NodeStatus } from '../types';
 import { safeJsonParseArray, safeJsonParseObject, extractYamlOrJson, safeYamlParse } from '../utils/safe-json';
-import { Constitution } from './genesis-protocol';
+import { Constitution, ProjectMode } from './genesis-protocol';
 
 export interface PrismConfig {
     maxAtomicTasks?: number;
     maxCouncilSize?: number;
     maxDecompositionPasses: number;
+    decompositionStrategy?: DecompositionStrategy;
+    jsonRetryMode?: 'none' | 'all' | 'prompt';
 }
 
 /**
@@ -81,6 +83,16 @@ export interface AtomicCouncilResult {
     atomicTasks: AtomicTask[];
     nonAtomicTasksRedecomposed: number;
     totalDecompositionPasses: number;
+    telemetry?: {
+        decompositionStrategy: DecompositionStrategy;
+        totalIterations: number;
+        maxDepthReached: number;
+        stallCycles: number;
+        stopReason: 'completed' | 'max_iterations' | 'stall_limit' | 'max_tasks';
+        overlapReduced: number;
+        rejectedSplits: number;
+        modeDriftEvents: number;
+    };
 }
 
 export interface AdaptiveRoutingResult {
@@ -107,6 +119,59 @@ export interface AtomicityValidation {
 }
 
 /**
+ * Get mode-specific task examples for Prism task generation
+ * 
+ * Provides domain-appropriate task examples for each project mode
+ * 
+ * @param mode - The project mode (software, scientific_research, legal_research, creative_writing, general)
+ * @returns String containing mode-specific task examples
+ */
+export function getModeSpecificTaskExamples(mode: ProjectMode): string {
+    const examples: Record<ProjectMode, string> = {
+        software: `
+Example: "Define the Authentication Flow Architecture"
+Deliverable: "JWT strategy specification with refresh token handling"
+`,
+        scientific_research: `
+Example: "Conduct systematic literature review on [topic]"
+Deliverable: "Annotated bibliography with thematic synthesis (20-30 sources)"
+`,
+        legal_research: `
+Example: "Analyze precedent applicability for [case]"
+Deliverable: "IRAC analysis memo with case citations and policy considerations"
+`,
+        creative_writing: `
+Example: "Design Act II turning point sequence"
+Deliverable: "Beat sheet with character motivation and structural impact analysis"
+`,
+        general: `
+Example: "Analyze the core requirements for [goal]"
+Deliverable: "Structured analysis with identified constraints and success criteria"
+`
+    };
+    return examples[mode] || examples.general;
+}
+
+/**
+ * Get mode-specific atomicity rules for Prism task generation
+ * 
+ * Provides domain-appropriate atomicity rules for each project mode
+ * 
+ * @param mode - The project mode (software, scientific_research, legal_research, creative_writing, general)
+ * @returns String containing mode-specific atomicity rules
+ */
+export function getAtomicityRulesForMode(mode: ProjectMode): string {
+    const rules: Record<ProjectMode, string> = {
+        software: "Single architectural decision, single deliverable",
+        scientific_research: "Single research question, single synthesis",
+        legal_research: "Single legal issue, single IRAC analysis",
+        creative_writing: "Single narrative beat, single structural element",
+        general: "Single action, single deliverable"
+    };
+    return rules[mode] || rules.general;
+}
+
+/**
  * The Prism (Decomposition Controller) - V2.99
  * 
  * Responsible for:
@@ -128,6 +193,7 @@ export class PrismController {
         rawOutput: string;
         timestamp: number;
     }> = [];
+    private jsonRetryMode: 'none' | 'all' | 'prompt' = 'prompt';
 
     constructor() { }
 
@@ -144,10 +210,11 @@ export class PrismController {
         constitution: Constitution | null,
         ai: any,
         model: string,
-        config: PrismConfig = { maxAtomicTasks: 10, maxCouncilSize: 5, maxDecompositionPasses: 3 }
+        config: PrismConfig = { maxCouncilSize: 5, maxDecompositionPasses: 3, decompositionStrategy: 'bounded', jsonRetryMode: 'prompt' }
     ): Promise<PrismAnalysisResult> {
         // █ ANCHOR 1.2: The Prism Pipeline (A->B->C->D)
         console.log('[Prism] Starting Four-Step Analysis...');
+        this.jsonRetryMode = config.jsonRetryMode || 'prompt';
 
         const result: PrismAnalysisResult = {
             stepA: { domain: 'General', domainExpertise: [], confidence: 0 },
@@ -283,69 +350,201 @@ Be SPECIFIC. Generic domains like "Software" or "Web" are failures.
             nonAtomicTasksRedecomposed: 0,
             totalDecompositionPasses: 0
         };
+        const mode = constitution?.mode || 'software';
+        const decompositionStrategy = config.decompositionStrategy || 'bounded';
+        const maxDepth = decompositionStrategy === 'fixpoint_recursive'
+            ? Math.max(config.maxDecompositionPasses, 6)
+            : config.maxDecompositionPasses;
+        const maxTotalTasks = config.maxAtomicTasks ?? Number.MAX_SAFE_INTEGER;
+        const maxIterations = decompositionStrategy === 'fixpoint_recursive' ? 400 : 150;
+        const stallLimit = decompositionStrategy === 'fixpoint_recursive' ? 8 : 4;
 
         try {
             // First, generate the council
-            result.council = await this.generateCouncil(goal, domainResult, ai, model, config.maxCouncilSize);
+            result.council = await this.generateCouncil(goal, domainResult, ai, model, config.maxCouncilSize, mode);
 
             // Then, generate initial task decomposition
             let tasks = await this.generateAtomicTasks(goal, domainResult, constitution, result.council, ai, model, config.maxAtomicTasks, 0.5);
             console.log('[Prism:B] Task count after initial generation:', tasks.length);
-            result.totalDecompositionPasses = 1;
+            let generationPasses = 1;
 
-            // TASK 2: Handle empty task array with retry
+            // Handle empty task array with retry
             if (tasks.length === 0) {
-                console.warn('[Prism:B] ⚠️ ZERO tasks generated! Attempting retry with higher temperature...');
+                console.warn('[Prism:B] [WARN] ZERO tasks generated. Attempting retry with higher temperature...');
                 tasks = await this.generateAtomicTasks(goal, domainResult, constitution, result.council, ai, model, config.maxAtomicTasks, 0.8);
                 console.log('[Prism:B] Retry task count (temp=0.8):', tasks.length);
-                result.totalDecompositionPasses++;
+                generationPasses++;
 
                 // If still empty, generate fallback tasks based on the goal
                 if (tasks.length === 0) {
-                    console.warn('[Prism:B] ⚠️ Retry failed! Generating fallback tasks from goal...');
-                    tasks = this.generateFallbackTasks(goal, domainResult, result.council);
+                    console.warn('[Prism:B] [WARN] Retry failed. Generating fallback tasks from goal...');
+                    tasks = this.generateFallbackTasks(goal, domainResult, result.council, constitution?.mode || 'software');
                     console.log('[Prism:B] Fallback task count:', tasks.length);
                 }
             }
 
-            // Validate atomicity and re-decompose if needed
-            let nonAtomicCount = 0;
-            let atomicTasks: AtomicTask[] = [];
+            result.totalDecompositionPasses = generationPasses;
 
-            for (const task of tasks) {
-                const validation = this.validateAtomicity(task);
+            // Queue-driven decomposition with stop conditions
+            type QueueItem = { task: AtomicTask; depth: number };
+            const queue: QueueItem[] = tasks.map(task => ({ task, depth: 0 }));
+            let nonAtomicCount = 0;
+            const atomicTasks: AtomicTask[] = [];
+            let iterations = 0;
+            let stallCycles = 0;
+            let maxDepthReached = 0;
+            let rejectedSplits = 0;
+            let modeDriftEvents = 0;
+            let stopReason: 'completed' | 'max_iterations' | 'stall_limit' | 'max_tasks' = 'completed';
+
+            while (queue.length > 0 && iterations < maxIterations) {
+                iterations++;
+
+                if (atomicTasks.length >= maxTotalTasks) {
+                    console.warn(`[Prism:B] Reached max task budget (${maxTotalTasks}). Stopping decomposition.`);
+                    stopReason = 'max_tasks';
+                    break;
+                }
+
+                const current = queue.shift()!;
+                maxDepthReached = Math.max(maxDepthReached, current.depth);
+                const validation = this.validateAtomicity(current.task);
+                current.task.isAtomic = validation.isAtomic;
+                current.task.atomicityIssues = validation.isAtomic ? undefined : validation.issues;
 
                 if (validation.isAtomic) {
-                    task.isAtomic = true;
-                    atomicTasks.push(task);
-                } else {
-                    task.isAtomic = false;
-                    task.atomicityIssues = validation.issues;
-                    nonAtomicCount++;
+                    atomicTasks.push(current.task);
+                    continue;
+                }
 
-                    // Re-decompose non-atomic task
-                    if (result.totalDecompositionPasses < config.maxDecompositionPasses) {
-                        const subTasks = await this.redecomposeTask(task, ai, model);
-                        result.totalDecompositionPasses++;
+                nonAtomicCount++;
 
-                        // Validate sub-tasks (one more level only)
-                        for (const subTask of subTasks) {
-                            const subValidation = this.validateAtomicity(subTask);
-                            subTask.isAtomic = subValidation.isAtomic;
-                            subTask.atomicityIssues = subValidation.isAtomic ? undefined : subValidation.issues;
-                            atomicTasks.push(subTask);
-                        }
-                    } else {
-                        // Max passes reached, accept as-is with warning
-                        atomicTasks.push(task);
+                const canRedecompose =
+                    decompositionStrategy !== 'off' &&
+                    current.depth < maxDepth &&
+                    result.totalDecompositionPasses < maxIterations;
+
+                if (!canRedecompose) {
+                    atomicTasks.push(current.task);
+                    continue;
+                }
+
+                const parentScore = this.scoreAtomicity(current.task, validation);
+                const subTasks = await this.redecomposeTask(current.task, ai, model);
+                result.totalDecompositionPasses++;
+
+                if (subTasks.length === 0) {
+                    stallCycles++;
+                    atomicTasks.push(current.task);
+                    if (stallCycles >= stallLimit) {
+                        console.warn(`[Prism:B] Stall limit reached (${stallLimit}). Ending decomposition loop.`);
+                        stopReason = 'stall_limit';
+                        break;
                     }
+                    continue;
+                }
+
+                const scoredSubTasks = subTasks.map((subTask) => {
+                    const subValidation = this.validateAtomicity(subTask);
+                    subTask.isAtomic = subValidation.isAtomic;
+                    subTask.atomicityIssues = subValidation.isAtomic ? undefined : subValidation.issues;
+                    return {
+                        task: subTask,
+                        score: this.scoreAtomicity(subTask, subValidation)
+                    };
+                });
+
+                const inModeSubTasks = scoredSubTasks.filter((item) => {
+                    if (this.detectModeDrift(item.task, mode)) {
+                        modeDriftEvents++;
+                        rejectedSplits++;
+                        return false;
+                    }
+                    return true;
+                });
+
+                if (inModeSubTasks.length === 0) {
+                    stallCycles++;
+                    atomicTasks.push(current.task);
+                    if (stallCycles >= stallLimit) {
+                        stopReason = 'stall_limit';
+                        console.warn(`[Prism:B] Stall limit reached (${stallLimit}) after mode-drift filtering.`);
+                        break;
+                    }
+                    continue;
+                }
+
+                const averageSubScore = inModeSubTasks.reduce((sum, item) => sum + item.score, 0) / inModeSubTasks.length;
+                const improved =
+                    averageSubScore >= parentScore + 0.05 ||
+                    inModeSubTasks.some(item => item.score >= parentScore + 0.1);
+
+                if (!improved && decompositionStrategy !== 'fixpoint_recursive') {
+                    stallCycles++;
+                    rejectedSplits++;
+                    atomicTasks.push(current.task);
+                    if (stallCycles >= stallLimit) {
+                        console.warn(`[Prism:B] Stall limit reached (${stallLimit}) without score improvement.`);
+                        stopReason = 'stall_limit';
+                        break;
+                    }
+                    continue;
+                }
+
+                stallCycles = improved ? 0 : stallCycles + 1;
+                if (stallCycles >= stallLimit) {
+                    console.warn(`[Prism:B] Stall limit reached (${stallLimit}) in fixpoint mode. Stopping decomposition.`);
+                    atomicTasks.push(current.task);
+                    rejectedSplits++;
+                    stopReason = 'stall_limit';
+                    break;
+                }
+
+                for (const sub of inModeSubTasks) {
+                    if (atomicTasks.length + queue.length >= maxTotalTasks) {
+                        break;
+                    }
+                    queue.push({ task: sub.task, depth: current.depth + 1 });
                 }
             }
 
-            result.atomicTasks = atomicTasks;
-            result.nonAtomicTasksRedecomposed = nonAtomicCount;
+            if (iterations >= maxIterations && queue.length > 0) {
+                stopReason = 'max_iterations';
+                console.warn(`[Prism:B] Hit max decomposition iterations (${maxIterations}).`);
+            }
 
-            console.log(`[Prism:B] Generated ${atomicTasks.length} tasks. Re-decomposed ${nonAtomicCount} non-atomic tasks.`);
+            if (queue.length > 0) {
+                console.warn(`[Prism:B] Committing ${queue.length} remaining queued tasks as-is.`);
+                while (queue.length > 0 && atomicTasks.length < maxTotalTasks) {
+                    const pending = queue.shift()!;
+                    if (pending.task.isAtomic === undefined) {
+                        const pendingValidation = this.validateAtomicity(pending.task);
+                        pending.task.isAtomic = pendingValidation.isAtomic;
+                        pending.task.atomicityIssues = pendingValidation.isAtomic ? undefined : pendingValidation.issues;
+                    }
+                    atomicTasks.push(pending.task);
+                }
+            }
+
+            const optimizedTasks = this.optimizeTaskAdjacency(atomicTasks);
+            if (optimizedTasks.length !== atomicTasks.length) {
+                console.log(`[Prism:B] Post-processing reduced overlap: ${atomicTasks.length} -> ${optimizedTasks.length} tasks.`);
+            }
+
+            result.atomicTasks = optimizedTasks;
+            result.nonAtomicTasksRedecomposed = nonAtomicCount;
+            result.telemetry = {
+                decompositionStrategy,
+                totalIterations: iterations,
+                maxDepthReached,
+                stallCycles,
+                stopReason,
+                overlapReduced: Math.max(0, atomicTasks.length - optimizedTasks.length),
+                rejectedSplits,
+                modeDriftEvents
+            };
+
+            console.log(`[Prism:B] Generated ${optimizedTasks.length} tasks. Re-decomposed ${nonAtomicCount} non-atomic tasks.`);
             return result;
 
         } catch (error) {
@@ -362,11 +561,16 @@ Be SPECIFIC. Generic domains like "Software" or "Web" are failures.
         domainResult: DomainClassificationResult,
         ai: any,
         model: string,
-        maxCouncilSize?: number
+        maxCouncilSize?: number,
+        mode: ProjectMode = 'software'
     ): Promise<CouncilProposal> {
         const limitConstraint = maxCouncilSize
             ? `Generate up to ${maxCouncilSize} specialists (minimum 1, maximum ${maxCouncilSize})`
             : `Generate as many specialists as needed (typically 3-10)`;
+        const modeSpecificGuidance = this.getCouncilGuidanceForMode(mode);
+        const planningArtifactType = mode === 'software'
+            ? 'architecture specifications'
+            : 'domain-appropriate planning specifications';
 
         const prompt = `
 You are The Prism. Generate a CUSTOM Council of Specialists for this specific domain.
@@ -374,16 +578,14 @@ You are The Prism. Generate a CUSTOM Council of Specialists for this specific do
 DOMAIN: ${domainResult.domain}
 SUB-DOMAIN: ${domainResult.subDomain || 'N/A'}
 REQUIRED EXPERTISE: ${domainResult.domainExpertise.join(', ')}
+PROJECT MODE: ${mode}
 
 GOAL: "${goal}"
 
-## 🔴 IMPORTANT: These specialists design ARCHITECTURE, not implementation.
+## CRITICAL ROLE DESIGN RULES
 
-- "API Architect" designs API contracts, NOT API code
-- "Data Modeler" designs schemas, NOT migration scripts  
-- "Security Analyst" defines security requirements, NOT security middleware
-
-Each specialist outputs SPECIFICATIONS with rationale, not executable code.
+Each specialist must produce ${planningArtifactType} with rationale, not implementation or final product output.
+${modeSpecificGuidance}
 
 ${limitConstraint} with HYPER-SPECIFIC roles for this domain.
 
@@ -434,6 +636,33 @@ Return JSON:
         };
     }
 
+    private getCouncilGuidanceForMode(mode: ProjectMode): string {
+        const guidance: Record<ProjectMode, string> = {
+            software: `
+- Example role shape: "Authentication Flow Architect", "Data Contract Analyst", "Reliability Architect"
+- Forbidden role shape: "Backend Developer", "Frontend Coder", "Full Stack Engineer"
+- Output focus: architecture decisions, contracts, constraints, and validation criteria.`,
+            scientific_research: `
+- Example role shape: "Literature Synthesis Lead", "Methodology Designer", "Evidence Quality Analyst"
+- Forbidden role shape: "App Developer", "API Engineer", "DevOps Specialist" unless software implementation is explicitly requested.
+- Output focus: hypotheses, evidence synthesis plans, methods, limitations, and reproducibility strategy.`,
+            legal_research: `
+- Example role shape: "Issue Framing Analyst", "Precedent Mapper", "Citation Verifier"
+- Forbidden role shape: "Legal Advisor", "Counsel for Client", "Software Engineer" unless explicitly requested.
+- Output focus: issue/rule mapping, precedent analysis, citation integrity, and jurisdiction checks.`,
+            creative_writing: `
+- Example role shape: "Beat Structure Architect", "Character Arc Planner", "Theme Cohesion Analyst"
+- Forbidden role shape: "Novelist", "Dialogue Writer", "Screenplay Author" when generating full prose/dialogue.
+- Output focus: narrative structure, scene purpose, arc consistency, and thematic alignment.`,
+            general: `
+- Example role shape: "Scope Analyst", "Constraint Planner", "Validation Strategist"
+- Forbidden role shape: generic implementation/coding roles unless explicitly requested.
+- Output focus: scope framing, decision quality, verification, and delivery structure.`
+        };
+
+        return guidance[mode] || guidance.general;
+    }
+
     /**
      * Generate Atomic Tasks from the goal
      * @param customTemperature - Optional temperature override for retry attempts
@@ -462,12 +691,20 @@ Return JSON:
             ? `Constraints: ${(constitution.constraints || []).map(c => c.description).join(', ')}`
             : '';
 
+        // Extract mode from Constitution (default to 'software' for backward compatibility)
+        const mode = constitution?.mode || 'software';
+        
         const isRecursive = !!parentContext;
         const depthIndicator = isRecursive ? `(Recursion Level ${parentContext?.depth})` : '(Root Level)';
 
         const limitConstraint = maxTasks
             ? `**TASK LIMIT:** Generate up to ${maxTasks} tasks. Do NOT exceed ${maxTasks} unless absolutely critical.`
             : `**DO NOT limit the number of tasks.** Generate as many as required to fully satisfy the goal.`;
+
+        // Get mode-specific prompt content
+        const modeSpecificTaskExamples = getModeSpecificTaskExamples(mode);
+        const atomicityRules = getAtomicityRulesForMode(mode);
+        const completenessGuidance = this.getCompletenessGuidanceForMode(mode);
 
         // STOP 1.4:V2.99 Soft-Strict Protocol: "Think then Commit" pattern
         // Agent reasons in Markdown, then commits structured data in YAML
@@ -480,6 +717,7 @@ You are The Prism's ATOMIZER. Your job is to break down this goal into ATOMIC si
 ## PROJECT CONTEXT
 
 **DOMAIN:** ${domainResult.domain}
+**PROJECT MODE:** ${mode}
 **GOAL:** "${goal}"
 ${constraintContext ? `**${constraintContext}**` : ''}
 
@@ -496,15 +734,22 @@ ${(council.specialists || []).map(s => `- \`${s.id}\`: ${s.role}`).join('\n')}
 
 ## 🔴 CRITICAL CONSTRAINTS
 
-1. **NOT A CODING AGENT** - These are ARCHITECTURAL PLANNING tasks, not implementation.
+1. **NOT A CODING AGENT** - These are ${mode === 'software' ? 'ARCHITECTURAL PLANNING' : 'DOMAIN-APPROPRIATE PLANNING'} tasks, not implementation.
 2. **ATOMICTY RULES:**
+   - ${atomicityRules}
    - ONE primary action verb per task (Specify, Design, Define, Analyze, Document)
    - ONE clear deliverable per task
    
-3. **COMPLETENESS (The "Soul" Rule):**
-   - ${isRecursive ? 'Explode this Epic into EVERY necessary sub-component.' : 'Generate the high-level Epics/Modules needed.'}
-   - ${limitConstraint}
-   - If this is a complex feature (e.g., "Authentication"), break it down: JWT strategy, DB schema users, Login API spec, Register API spec, Forgot Password flow, etc.
+   3. **COMPLETENESS (The "Soul" Rule):**
+      - ${isRecursive ? 'Explode this Epic into EVERY necessary sub-component.' : 'Decompose into the SMALLEST independently completable atomic tasks needed to satisfy the goal.'}
+      - ${limitConstraint}
+      - ${completenessGuidance}
+
+---
+
+## MODE-SPECIFIC TASK EXAMPLE
+
+${modeSpecificTaskExamples}
 
 ---
 
@@ -571,14 +816,25 @@ Begin your response with your THINKING, then end with the YAML commit block:`;
                     console.warn('[Prism] Failed to parse Atomic Tasks (YAML and JSON):', yamlResult.error);
                     console.warn('[Prism] Raw Output:', response.text.substring(0, 200) + '...');
 
-                    // V2.99: Store failed parse info for UI-driven retry
-                    this.failedJsonParses.push({
-                        nodeId: 'prism_atomic_tasks',
-                        nodeName: 'Atomic Task Generation',
-                        rawOutput: response.text,
-                        timestamp: Date.now()
-                    });
-                    console.warn('[Prism] Parse failed. Stored for potential retry via UI.');
+                    if (this.jsonRetryMode === 'all') {
+                        const retryResult = await this.retryWithExplicitJson(response.text, ai, model, domainResult);
+                        if (retryResult.success && retryResult.data.length > 0) {
+                            console.log('[Prism] Auto JSON retry succeeded.');
+                            return retryResult.data;
+                        }
+                        console.warn('[Prism] Auto JSON retry failed.');
+                    } else if (this.jsonRetryMode === 'prompt') {
+                        // V2.99: Store failed parse info for UI-driven retry
+                        this.failedJsonParses.push({
+                            nodeId: 'prism_atomic_tasks',
+                            nodeName: 'Atomic Task Generation',
+                            rawOutput: response.text,
+                            timestamp: Date.now()
+                        });
+                        console.warn('[Prism] Parse failed. Stored for potential retry via UI.');
+                    } else {
+                        console.warn('[Prism] Parse failed. jsonRetryMode=none, skipping retry and continuing to fallback.');
+                    }
                 }
             }
         }
@@ -602,6 +858,17 @@ Begin your response with your THINKING, then end with the YAML commit block:`;
         return [];
     }
 
+    private getCompletenessGuidanceForMode(mode: ProjectMode): string {
+        const guidance: Record<ProjectMode, string> = {
+            software: 'If this is a complex feature (for example: authentication), decompose into architecture-level parts such as auth strategy, user data model, API contract coverage, recovery flows, and validation approach.',
+            scientific_research: 'If this is a complex research topic, decompose into literature scope, hypothesis framing, methodology design, analysis plan, limitations, and reproducibility checks.',
+            legal_research: 'If this is a complex legal matter, decompose into issue framing, governing rule set, precedent mapping, counterargument analysis, jurisdiction checks, and citation verification.',
+            creative_writing: 'If this is a complex narrative goal, decompose into premise articulation, character arcs, act-level beats, turning points, climax design, and resolution integrity.',
+            general: 'If this is a complex goal, decompose into requirements, assumptions, dependencies, risk checks, and validation criteria.'
+        };
+        return guidance[mode] || guidance.general;
+    }
+
     /**
      * Generate fallback tasks when LLM generation fails completely
      * Creates basic tasks based on goal analysis
@@ -609,7 +876,8 @@ Begin your response with your THINKING, then end with the YAML commit block:`;
     private generateFallbackTasks(
         goal: string,
         domainResult: DomainClassificationResult,
-        council: CouncilProposal
+        council: CouncilProposal,
+        mode: ProjectMode
     ): AtomicTask[] {
         console.log('[Prism:B] Generating fallback tasks from goal analysis...');
 
@@ -618,98 +886,159 @@ Begin your response with your THINKING, then end with the YAML commit block:`;
         const fallbackTasks: AtomicTask[] = [];
         const defaultSpecialist = council.specialists[0]?.id || 'domain_expert';
 
-        // Task 1: Always start with requirements analysis
-        fallbackTasks.push({
-            id: 'fallback_requirements',
-            title: 'Define Core Requirements',
-            instruction: `Analyze the following goal and extract the core requirements: "${goal.substring(0, 200)}"`,
-            domain: domainResult.domain,
-            complexity: 3,
-            routingPath: 'fast',
-            estimatedTokens: 1000,
-            dependencies: [],
-            assignedSpecialist: defaultSpecialist,
-            isAtomic: true,
-            enabled: true
-        });
-
-        // Task 2: Architecture/Structure
-        fallbackTasks.push({
-            id: 'fallback_architecture',
-            title: 'Design System Architecture',
-            instruction: `Based on the goal "${goal.substring(0, 100)}", outline the high-level system architecture and key components.`,
-            domain: domainResult.domain,
-            complexity: 5,
-            routingPath: 'fast',
-            estimatedTokens: 1500,
-            dependencies: ['fallback_requirements'],
-            assignedSpecialist: defaultSpecialist,
-            isAtomic: true,
-            enabled: true
-        });
-
-        // Task 3: Implementation Plan
-        fallbackTasks.push({
-            id: 'fallback_implementation',
-            title: 'Create Implementation Plan',
-            instruction: `Create a step-by-step implementation plan for the core functionality described in: "${goal.substring(0, 150)}"`,
-            domain: domainResult.domain,
-            complexity: 4,
-            routingPath: 'fast',
-            estimatedTokens: 1200,
-            dependencies: ['fallback_architecture'],
-            assignedSpecialist: defaultSpecialist,
-            isAtomic: true,
-            enabled: true
-        });
-
-        // Task 4: Domain-specific task based on keywords
-        if (goalLower.includes('api') || goalLower.includes('endpoint') || goalLower.includes('backend')) {
+        const pushTask = (
+            id: string,
+            title: string,
+            instruction: string,
+            complexity: number,
+            dependencies: string[] = []
+        ) => {
             fallbackTasks.push({
-                id: 'fallback_api_design',
-                title: 'Design API Endpoints',
-                instruction: 'Define the API endpoint structure, request/response schemas, and authentication requirements.',
+                id,
+                title,
+                instruction,
                 domain: domainResult.domain,
-                complexity: 5,
-                routingPath: 'fast',
-                estimatedTokens: 1500,
-                dependencies: ['fallback_architecture'],
+                complexity,
+                routingPath: complexity >= 7 ? 'slow' : 'fast',
+                estimatedTokens: 1000 + (complexity * 100),
+                dependencies,
                 assignedSpecialist: defaultSpecialist,
                 isAtomic: true,
                 enabled: true
             });
-        }
+        };
 
-        if (goalLower.includes('ui') || goalLower.includes('frontend') || goalLower.includes('interface') || goalLower.includes('page')) {
-            fallbackTasks.push({
-                id: 'fallback_ui_design',
-                title: 'Design User Interface',
-                instruction: 'Create wireframes and component specifications for the user interface.',
-                domain: domainResult.domain,
-                complexity: 4,
-                routingPath: 'fast',
-                estimatedTokens: 1200,
-                dependencies: ['fallback_architecture'],
-                assignedSpecialist: defaultSpecialist,
-                isAtomic: true,
-                enabled: true
-            });
-        }
+        pushTask(
+            'fallback_requirements',
+            'Define Core Requirements',
+            `Analyze the following goal and extract the core requirements: "${goal.substring(0, 200)}"`,
+            3
+        );
 
-        if (goalLower.includes('database') || goalLower.includes('data') || goalLower.includes('store')) {
-            fallbackTasks.push({
-                id: 'fallback_data_model',
-                title: 'Define Data Model',
-                instruction: 'Design the database schema and data relationships for the application.',
-                domain: domainResult.domain,
-                complexity: 5,
-                routingPath: 'fast',
-                estimatedTokens: 1500,
-                dependencies: ['fallback_requirements'],
-                assignedSpecialist: defaultSpecialist,
-                isAtomic: true,
-                enabled: true
-            });
+        if (mode === 'software') {
+            pushTask(
+                'fallback_architecture',
+                'Design System Architecture',
+                `Based on the goal "${goal.substring(0, 120)}", outline the architecture modules and interface boundaries.`,
+                5,
+                ['fallback_requirements']
+            );
+            pushTask(
+                'fallback_plan',
+                'Create Implementation Roadmap',
+                `Create an architecture-first implementation roadmap for: "${goal.substring(0, 150)}"`,
+                4,
+                ['fallback_architecture']
+            );
+
+            if (goalLower.includes('api') || goalLower.includes('endpoint') || goalLower.includes('backend')) {
+                pushTask(
+                    'fallback_api_design',
+                    'Define API Contract Coverage',
+                    'Define endpoint contracts, request/response schemas, and authentication boundaries.',
+                    5,
+                    ['fallback_architecture']
+                );
+            }
+            if (goalLower.includes('ui') || goalLower.includes('frontend') || goalLower.includes('interface') || goalLower.includes('page')) {
+                pushTask(
+                    'fallback_ui_design',
+                    'Define Interface Specification',
+                    'Define the major interface flows and component-level specifications.',
+                    4,
+                    ['fallback_architecture']
+                );
+            }
+            if (goalLower.includes('database') || goalLower.includes('data') || goalLower.includes('store')) {
+                pushTask(
+                    'fallback_data_model',
+                    'Define Data Model',
+                    'Define the data entities, relationships, and persistence constraints.',
+                    5,
+                    ['fallback_requirements']
+                );
+            }
+        } else if (mode === 'scientific_research') {
+            pushTask(
+                'fallback_literature',
+                'Define Literature Review Scope',
+                'Define search terms, inclusion/exclusion criteria, and source-quality thresholds.',
+                5,
+                ['fallback_requirements']
+            );
+            pushTask(
+                'fallback_methodology',
+                'Design Methodology Framework',
+                'Design methodology, evidence standards, and reproducibility controls for the research plan.',
+                6,
+                ['fallback_literature']
+            );
+            pushTask(
+                'fallback_analysis',
+                'Define Analysis Plan',
+                'Define analysis techniques, expected limitations, and validation strategy.',
+                5,
+                ['fallback_methodology']
+            );
+        } else if (mode === 'legal_research') {
+            pushTask(
+                'fallback_issue_framing',
+                'Frame Legal Issues',
+                'Frame the primary legal issues and governing legal questions.',
+                5,
+                ['fallback_requirements']
+            );
+            pushTask(
+                'fallback_precedent',
+                'Map Governing Precedents',
+                'Map controlling and persuasive authorities with jurisdiction relevance.',
+                6,
+                ['fallback_issue_framing']
+            );
+            pushTask(
+                'fallback_irac',
+                'Draft IRAC Structure',
+                'Draft an IRAC-aligned analysis structure with citation checkpoints.',
+                5,
+                ['fallback_precedent']
+            );
+        } else if (mode === 'creative_writing') {
+            pushTask(
+                'fallback_premise',
+                'Define Narrative Premise',
+                'Define premise, genre expectations, and central thematic intent.',
+                4,
+                ['fallback_requirements']
+            );
+            pushTask(
+                'fallback_structure',
+                'Design Story Structure',
+                'Design act-level structure, key turning points, and pacing targets.',
+                5,
+                ['fallback_premise']
+            );
+            pushTask(
+                'fallback_character_arcs',
+                'Map Character Arcs',
+                'Map protagonist and antagonist arc trajectories across the planned structure.',
+                5,
+                ['fallback_structure']
+            );
+        } else {
+            pushTask(
+                'fallback_scope',
+                'Define Scope Boundaries',
+                'Define in-scope vs out-of-scope boundaries and critical assumptions.',
+                4,
+                ['fallback_requirements']
+            );
+            pushTask(
+                'fallback_validation',
+                'Define Validation Criteria',
+                'Define measurable success criteria and a validation approach.',
+                4,
+                ['fallback_scope']
+            );
         }
 
         console.log(`[Prism:B] Generated ${fallbackTasks.length} fallback tasks.`);
@@ -798,6 +1127,212 @@ Begin your response with your THINKING, then end with the YAML commit block:`;
         }
 
         return result;
+    }
+
+    /**
+     * Atomicity score in [0,1], used as a decomposition progress gate.
+     * Higher score means tighter, more independently completable task shape.
+     */
+    private scoreAtomicity(task: AtomicTask, validation?: AtomicityValidation): number {
+        const checked = validation || this.validateAtomicity(task);
+        let score = checked.isAtomic ? 1 : 0.7;
+
+        score -= Math.min(0.45, checked.issues.length * 0.15);
+
+        const instructionLength = task.instruction?.length || 0;
+        if (instructionLength > 220) {
+            score -= Math.min(0.2, (instructionLength - 220) / 700);
+        }
+
+        if ((task.dependencies || []).length > 2) {
+            score -= Math.min(0.1, ((task.dependencies || []).length - 2) * 0.04);
+        }
+
+        if ((task.title || '').length > 90) {
+            score -= 0.05;
+        }
+
+        return Math.max(0, Math.min(1, score));
+    }
+
+    /**
+     * Reduce overlap and improve constructive ordering across atomic tasks.
+     */
+    private optimizeTaskAdjacency(tasks: AtomicTask[]): AtomicTask[] {
+        if (tasks.length <= 1) {
+            return tasks;
+        }
+
+        const clones = tasks.map(task => ({
+            ...task,
+            dependencies: [...(task.dependencies || [])]
+        }));
+
+        const keyToIndex = new Map<string, number>();
+        const droppedIds = new Map<string, string>();
+        const kept: AtomicTask[] = [];
+
+        for (const task of clones) {
+            const key = this.normalizeTaskText(`${task.title} ${task.instruction}`);
+            const existingIndex = keyToIndex.get(key);
+
+            if (existingIndex === undefined) {
+                keyToIndex.set(key, kept.length);
+                kept.push(task);
+                continue;
+            }
+
+            const existing = kept[existingIndex];
+            const existingScore = this.scoreAtomicity(existing);
+            const candidateScore = this.scoreAtomicity(task);
+            const keepCandidate = candidateScore > existingScore ? task : existing;
+            const dropped = keepCandidate.id === existing.id ? task : existing;
+            kept[existingIndex] = keepCandidate;
+            droppedIds.set(dropped.id, keepCandidate.id);
+        }
+
+        // Near-duplicate reduction
+        const reduced: AtomicTask[] = [];
+        for (const task of kept) {
+            let merged = false;
+            for (let i = 0; i < reduced.length; i++) {
+                const overlap = this.taskTextOverlap(task, reduced[i]);
+                if (overlap >= 0.9) {
+                    const existing = reduced[i];
+                    const keepCandidate = this.scoreAtomicity(task) > this.scoreAtomicity(existing) ? task : existing;
+                    const dropped = keepCandidate.id === existing.id ? task : existing;
+                    reduced[i] = keepCandidate;
+                    droppedIds.set(dropped.id, keepCandidate.id);
+                    merged = true;
+                    break;
+                }
+            }
+
+            if (!merged) {
+                reduced.push(task);
+            }
+        }
+
+        const validTaskIds = new Set(reduced.map(task => task.id));
+        for (const task of reduced) {
+            const remappedDependencies = (task.dependencies || [])
+                .map(dep => droppedIds.get(dep) || dep)
+                .filter(dep => dep !== task.id && validTaskIds.has(dep));
+            task.dependencies = Array.from(new Set(remappedDependencies));
+        }
+
+        return this.orderTasksForSynergy(reduced);
+    }
+
+    private orderTasksForSynergy(tasks: AtomicTask[]): AtomicTask[] {
+        if (tasks.length <= 1) {
+            return tasks;
+        }
+
+        const byId = new Map(tasks.map(task => [task.id, task]));
+        const indegree = new Map<string, number>();
+        const outgoing = new Map<string, string[]>();
+
+        for (const task of tasks) {
+            indegree.set(task.id, 0);
+            outgoing.set(task.id, []);
+        }
+
+        for (const task of tasks) {
+            for (const dep of task.dependencies || []) {
+                if (!byId.has(dep)) continue;
+                outgoing.get(dep)!.push(task.id);
+                indegree.set(task.id, (indegree.get(task.id) || 0) + 1);
+            }
+        }
+
+        const queue = tasks
+            .filter(task => (indegree.get(task.id) || 0) === 0)
+            .sort((a, b) => this.getSynergyPriority(a) - this.getSynergyPriority(b));
+        const ordered: AtomicTask[] = [];
+
+        while (queue.length > 0) {
+            const task = queue.shift()!;
+            ordered.push(task);
+
+            for (const childId of outgoing.get(task.id) || []) {
+                const nextIndegree = (indegree.get(childId) || 0) - 1;
+                indegree.set(childId, nextIndegree);
+                if (nextIndegree === 0) {
+                    const child = byId.get(childId);
+                    if (child) queue.push(child);
+                }
+            }
+
+            queue.sort((a, b) => this.getSynergyPriority(a) - this.getSynergyPriority(b));
+        }
+
+        if (ordered.length < tasks.length) {
+            const remaining = tasks
+                .filter(task => !ordered.some(existing => existing.id === task.id))
+                .sort((a, b) => this.getSynergyPriority(a) - this.getSynergyPriority(b));
+            ordered.push(...remaining);
+        }
+
+        return ordered;
+    }
+
+    private getSynergyPriority(task: AtomicTask): number {
+        const text = `${task.title} ${task.instruction}`.toLowerCase();
+        const foundationPatterns = ['requirement', 'scope', 'constraint', 'assumption', 'validation', 'methodology', 'issue framing'];
+        const foundationBias = foundationPatterns.some(pattern => text.includes(pattern)) ? -2 : 0;
+        return (task.dependencies?.length || 0) * 5 + (task.complexity || 5) + foundationBias;
+    }
+
+    private taskTextOverlap(a: AtomicTask, b: AtomicTask): number {
+        const setA = new Set(this.normalizeTaskText(`${a.title} ${a.instruction}`).split(' ').filter(Boolean));
+        const setB = new Set(this.normalizeTaskText(`${b.title} ${b.instruction}`).split(' ').filter(Boolean));
+        if (setA.size === 0 || setB.size === 0) {
+            return 0;
+        }
+
+        let intersection = 0;
+        for (const token of setA) {
+            if (setB.has(token)) intersection++;
+        }
+
+        const union = setA.size + setB.size - intersection;
+        return union === 0 ? 0 : intersection / union;
+    }
+
+    private normalizeTaskText(text: string): string {
+        return text
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    private detectModeDrift(task: AtomicTask, mode: ProjectMode): boolean {
+        if (mode === 'software') {
+            return false;
+        }
+
+        const text = `${task.title} ${task.instruction}`.toLowerCase();
+        const softwareMarkers = [
+            /\bapi\b/,
+            /\bendpoint\b/,
+            /\bdatabase\b/,
+            /\bschema\b/,
+            /\breact\b/,
+            /\btypescript\b/,
+            /\bjavascript\b/,
+            /\bbackend\b/,
+            /\bfrontend\b/,
+            /\bmiddleware\b/,
+            /\bdevops\b/,
+            /\bdeploy(ment)?\b/,
+            /\bcode\b/,
+            /\bclass\b/,
+            /\bfunction\b/
+        ];
+
+        return softwareMarkers.some((pattern) => pattern.test(text));
     }
 
     /**

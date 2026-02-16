@@ -1,12 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Settings, X, Zap, Gauge, Info, Download, Upload, Shield, Bug, FolderOpen, Terminal } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import { OuroborosEngine } from '../engine/OuroborosEngine';
-import { AppSettings } from '../types';
+import {
+    AppSettings,
+    CreativeOutputTarget,
+    DecompositionStrategy,
+    ExecutionStrategy,
+    SmallModelCompatibilityMode,
+    GuidedRepairMode,
+    OutputProfile,
+    TribunalStrictnessProfile,
+    SpecialistContextMode
+} from '../types';
 import { MODELS } from '../constants';
 import { useSoundEffects } from '../hooks/useSoundEffects';
 import { useOuroborosStore } from '../store/ouroborosStore';
+import type { ProjectMode } from '../engine/genesis-protocol';
+import { getModeDescription, getModeDisplayName } from '../engine/utils/mode-helpers';
+import { getDecompositionStrategy } from '../engine/utils/decomposition-settings';
 import { SessionCodex } from './SessionCodex';
 import { HydraTierEditor } from './settings/HydraTierEditor';
 import { BioButton } from './ui/BioButton';
@@ -14,6 +27,121 @@ import { BioButton } from './ui/BioButton';
 interface SettingsPanelProps {
     onClose: () => void;
 }
+
+const PROJECT_MODE_OPTIONS: ProjectMode[] = [
+    'software',
+    'scientific_research',
+    'legal_research',
+    'creative_writing',
+    'general'
+];
+
+const DECOMPOSITION_STRATEGY_OPTIONS: Array<{
+    value: DecompositionStrategy;
+    label: string;
+    description: string;
+}> = [
+        {
+            value: 'bounded',
+            label: 'Bounded (Default)',
+            description: 'Uses depth/task limits for stable decomposition.'
+        },
+        {
+            value: 'fixpoint_recursive',
+            label: 'Fixpoint Recursive',
+            description: 'Recursively decomposes until stop conditions are hit.'
+        },
+        {
+            value: 'off',
+            label: 'Off',
+            description: 'Single-pass generation. Fastest, least granular.'
+        }
+    ];
+
+const SMALL_MODEL_COMPATIBILITY_OPTIONS: Array<{
+    value: SmallModelCompatibilityMode;
+    label: string;
+}> = [
+        { value: 'auto', label: 'Auto (Default)' },
+        { value: 'force_off', label: 'Force OFF' }
+    ];
+
+const OUTPUT_PROFILE_OPTIONS: Array<{
+    value: OutputProfile;
+    label: string;
+    description: string;
+}> = [
+        {
+            value: 'lossless_only',
+            label: 'Lossless Only (Default)',
+            description: 'Preserves current architecture. Exports canonical artifacts without changing primary output behavior.'
+        },
+        {
+            value: 'lossless_plus_soul',
+            label: 'Lossless + Soul',
+            description: 'Keeps canonical artifacts and enables fluent projection for reader-facing output.'
+        }
+    ];
+
+const CREATIVE_OUTPUT_TARGET_OPTIONS: Array<{
+    value: CreativeOutputTarget;
+    label: string;
+}> = [
+        { value: 'auto', label: 'Auto Detect' },
+        { value: 'bible', label: 'Series Bible' },
+        { value: 'beat_sheet', label: 'Beat Sheet' },
+        { value: 'screenplay', label: 'Screenplay' }
+    ];
+
+const GUIDED_REPAIR_OPTIONS: Array<{
+    value: GuidedRepairMode;
+    label: string;
+}> = [
+        { value: 'auto', label: 'Auto (Recommended)' },
+        { value: 'always', label: 'Always On' },
+        { value: 'off', label: 'Off' }
+    ];
+
+const TRIBUNAL_STRICTNESS_OPTIONS: Array<{
+    value: TribunalStrictnessProfile;
+    label: string;
+}> = [
+        { value: 'balanced', label: 'Balanced (Default)' },
+        { value: 'strict', label: 'Strict' },
+        { value: 'local_small', label: 'Local-Small Friendly' }
+    ];
+
+const SPECIALIST_CONTEXT_OPTIONS: Array<{
+    value: SpecialistContextMode;
+    label: string;
+}> = [
+        { value: 'constitution_deltas', label: 'Constitution + Deltas' },
+        { value: 'dependency_artifacts', label: 'Dependency Artifacts' },
+        { value: 'top_k_relevant_bricks', label: 'Top-K Relevant Bricks (Default)' },
+        { value: 'full_verified_bricks', label: 'Full Verified Bricks (High Context)' }
+    ];
+
+const EXECUTION_STRATEGY_OPTIONS: Array<{
+    value: ExecutionStrategy;
+    label: string;
+    description: string;
+}> = [
+        {
+            value: 'linear',
+            label: 'Linear (Default)',
+            description: 'Runs one runnable node at a time for maximum context chaining.'
+        },
+        {
+            value: 'dependency_parallel',
+            label: 'Dependency Parallel',
+            description: 'Runs all dependency-ready nodes together (throughput-first).'
+        },
+        {
+            value: 'auto_branch_parallel',
+            label: 'Auto Branch Parallel (Advanced)',
+            description: 'Parallelizes only low-coupling branches under a similarity threshold.'
+        }
+    ];
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const settings = useLiveQuery(() => db.settings.get(1)) || {} as AppSettings;
@@ -27,6 +155,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
     const engine = OuroborosEngine.getInstance();
     const { playClick, playHover } = useSoundEffects();
     const { usageMetrics } = useOuroborosStore();
+    const selectedDefaultMode = settings.defaultProjectMode as ProjectMode | undefined;
+    const selectedDecompositionStrategy = getDecompositionStrategy(settings);
+    const rawSmallModelCompatibilityMode = (settings as any).smallModelCompatibilityMode;
+    const selectedSmallModelCompatibilityMode: SmallModelCompatibilityMode =
+        rawSmallModelCompatibilityMode === 'force_on'
+            ? 'auto'
+            : (rawSmallModelCompatibilityMode || 'auto');
+    const selectedOutputProfile = settings.outputProfile || 'lossless_only';
+    const selectedCreativeOutputTarget = settings.creativeOutputTarget || 'auto';
+    const selectedGuidedRepairMode = settings.guidedRepairMode || 'auto';
+    const selectedTribunalStrictness = settings.tribunalStrictnessProfile || 'balanced';
+    const selectedSpecialistContextMode = settings.specialistContextMode || 'top_k_relevant_bricks';
+    const selectedExecutionStrategy = settings.executionStrategy || 'linear';
 
 
 
@@ -134,6 +275,35 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                         </button>
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* DEFAULT MODE PREFERENCE */}
+                            <div className="space-y-3 pt-4 border-t border-emerald-900/30">
+                                <label className="text-xs font-bold text-emerald-700">
+                                    DEFAULT PROJECT MODE (NEW SESSIONS)
+                                </label>
+                                <select
+                                    value={selectedDefaultMode || ''}
+                                    onChange={(e) => {
+                                        const value = e.target.value as ProjectMode | '';
+                                        onUpdate({
+                                            defaultProjectMode: value || undefined
+                                        });
+                                    }}
+                                    className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                >
+                                    <option value="">Auto Detect (No Preference)</option>
+                                    {PROJECT_MODE_OPTIONS.map((mode) => (
+                                        <option key={mode} value={mode}>
+                                            {getModeDisplayName(mode)}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-[10px] text-emerald-700">
+                                    {selectedDefaultMode
+                                        ? `Genesis hint: ${getModeDescription(selectedDefaultMode)}`
+                                        : 'No hint set. Genesis will infer mode from the prompt alone.'}
+                                </p>
                             </div>
 
                             {/* TIERED MODEL CONFIGURATION */}
@@ -328,10 +498,183 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     <Shield className="w-3 h-3" /> V2.99 FACTORY PROTOCOLS
                                 </label>
                                 <p className="text-[10px] text-emerald-800 italic">
-                                    Core safety protocols are mandatory. Quality strictness is configurable via Turbo Mode.
+                                    Core safety protocols are mandatory. Default profile favors maximum task success and quality; cost controls remain adjustable.
                                 </p>
 
                                 <div className="grid grid-cols-2 gap-4">
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-emerald-400">Small-Model Compatibility</span>
+                                                <span
+                                                    className="text-emerald-600"
+                                                    title="Default (Auto): enables lite Specialist + Tribunal prompting only when the selected model is 'Speed Engine (Small Model)'. Force OFF keeps full prompts even on small models. Legacy Force ON values are normalized to Auto."
+                                                >
+                                                    <Info className="w-3 h-3" />
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <select
+                                            value={selectedSmallModelCompatibilityMode}
+                                            onChange={(e) => onUpdate({ smallModelCompatibilityMode: e.target.value as SmallModelCompatibilityMode })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {SMALL_MODEL_COMPATIBILITY_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="text-[9px] text-emerald-700 mt-1">
+                                            Use Auto for top-tier defaults with automatic fallback behavior on small local models.
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs text-emerald-400">Output Profile</span>
+                                            <span
+                                                className="text-emerald-600"
+                                                title="Lossless Only preserves current architecture defaults. Lossless + Soul adds a fluent projection while retaining immutable canonical artifacts."
+                                            >
+                                                <Info className="w-3 h-3" />
+                                            </span>
+                                        </div>
+                                        <select
+                                            value={selectedOutputProfile}
+                                            onChange={(e) => onUpdate({ outputProfile: e.target.value as OutputProfile })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {OUTPUT_PROFILE_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="text-[9px] text-emerald-700 mt-1">
+                                            {OUTPUT_PROFILE_OPTIONS.find((option) => option.value === selectedOutputProfile)?.description}
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs text-emerald-400">Creative Output Target</span>
+                                            <span
+                                                className="text-emerald-600"
+                                                title="Applies only to creative-writing mode soul outputs. Non-creative modes stay unchanged unless explicitly enabled below."
+                                            >
+                                                <Info className="w-3 h-3" />
+                                            </span>
+                                        </div>
+                                        <select
+                                            value={selectedCreativeOutputTarget}
+                                            onChange={(e) => onUpdate({ creativeOutputTarget: e.target.value as CreativeOutputTarget })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {CREATIVE_OUTPUT_TARGET_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <label className="flex items-center justify-between mt-2 text-[10px] text-emerald-500">
+                                            <span>Enable Soul Output For Non-Creative Modes</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={settings.enableSoulForNonCreativeModes || false}
+                                                onChange={(e) => onUpdate({ enableSoulForNonCreativeModes: e.target.checked })}
+                                                className="accent-emerald-500"
+                                            />
+                                        </label>
+                                    </div>
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs text-emerald-400">Guided Repair Mode</span>
+                                            <span
+                                                className="text-emerald-600"
+                                                title="Controls duel-based repair path when Tribunal rejects. Auto: one targeted repair attempt using tribunal evidence. Always: enforce guided repair whenever possible. Off: skip targeted repair and rely on full retry cycle."
+                                            >
+                                                <Info className="w-3 h-3" />
+                                            </span>
+                                        </div>
+                                        <select
+                                            value={selectedGuidedRepairMode}
+                                            onChange={(e) => onUpdate({ guidedRepairMode: e.target.value as GuidedRepairMode })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {GUIDED_REPAIR_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs text-emerald-400">Tribunal Strictness</span>
+                                            <span
+                                                className="text-emerald-600"
+                                                title="Balanced is default. Strict increases hard-fail sensitivity. Local-Small Friendly keeps hard fails for explicit rule breaks and routes softer issues to repair suggestions."
+                                            >
+                                                <Info className="w-3 h-3" />
+                                            </span>
+                                        </div>
+                                        <select
+                                            value={selectedTribunalStrictness}
+                                            onChange={(e) => onUpdate({ tribunalStrictnessProfile: e.target.value as TribunalStrictnessProfile })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {TRIBUNAL_STRICTNESS_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="flex flex-col p-2 bg-black border border-emerald-900 rounded col-span-2">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs text-emerald-400">Specialist Context Strategy</span>
+                                            <span
+                                                className="text-emerald-600"
+                                                title="Default uses Top-K relevant verified bricks for stronger cross-node continuity. Constitution+deltas is the lean baseline. Use budget controls below to prevent context bloat."
+                                            >
+                                                <Info className="w-3 h-3" />
+                                            </span>
+                                        </div>
+                                        <select
+                                            value={selectedSpecialistContextMode}
+                                            onChange={(e) => onUpdate({ specialistContextMode: e.target.value as SpecialistContextMode })}
+                                            className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {SPECIALIST_CONTEXT_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            <div className="space-y-1">
+                                                <label className="text-[9px] text-emerald-600 font-bold">Top-K Bricks</label>
+                                                <input
+                                                    type="number"
+                                                    min={1}
+                                                    max={20}
+                                                    value={settings.specialistContextTopK || 6}
+                                                    onChange={(e) => onUpdate({ specialistContextTopK: parseInt(e.target.value, 10) || 6 })}
+                                                    className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-[10px] focus:border-emerald-500 focus:outline-none"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[9px] text-emerald-600 font-bold">Budget (Chars)</label>
+                                                <input
+                                                    type="number"
+                                                    min={2000}
+                                                    max={120000}
+                                                    value={settings.specialistContextBudgetChars || 32000}
+                                                    onChange={(e) => onUpdate({ specialistContextBudgetChars: parseInt(e.target.value, 10) || 32000 })}
+                                                    className="w-full bg-black border border-emerald-900 rounded p-1 text-emerald-400 text-[10px] focus:border-emerald-500 focus:outline-none"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
                                     <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded">
                                         <span className="text-xs text-emerald-400">Red Flagging</span>
                                         <input
@@ -584,13 +927,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                                     type="range"
                                                     min="1"
                                                     max="10"
-                                                    value={settings.maxDecompositionPasses || 3}
+                                                    value={selectedDecompositionStrategy === 'off' ? 1 : (settings.maxDecompositionPasses || 3)}
                                                     onChange={(e) => onUpdate({ maxDecompositionPasses: parseInt(e.target.value) })}
-                                                    className="flex-1 accent-amber-500 h-1 bg-emerald-900 rounded-lg appearance-none cursor-pointer"
+                                                    disabled={selectedDecompositionStrategy === 'off'}
+                                                    className="flex-1 accent-amber-500 h-1 bg-emerald-900 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
                                                 />
-                                                <span className="text-amber-400 text-xs font-bold w-6">{settings.maxDecompositionPasses || 3}</span>
+                                                <span className="text-amber-400 text-xs font-bold w-6">{selectedDecompositionStrategy === 'off' ? 1 : (settings.maxDecompositionPasses || 3)}</span>
                                             </div>
-                                            <p className="text-[9px] text-emerald-800">Higher = More granular tasks</p>
+                                            <p className="text-[9px] text-emerald-800">
+                                                {selectedDecompositionStrategy === 'off'
+                                                    ? 'Disabled when decomposition strategy is Off'
+                                                    : 'Higher = more granular tasks'}
+                                            </p>
                                         </div>
                                     </div>
 
@@ -623,18 +971,32 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                             )}
                                         </div>
 
-                                        {/* Recursive Decomposition Toggle */}
-                                        <div className="flex items-center justify-between p-2 bg-black border border-emerald-900 rounded mt-0">
-                                            <div>
-                                                <span className="text-xs text-emerald-400" title="Allow tasks to spawn their own sub-projects (Fractal Growth)">Recursive Decomp.</span>
-                                                <p className="text-[9px] text-emerald-700">Explosive vertical expansion</p>
-                                            </div>
-                                            <input
-                                                type="checkbox"
-                                                checked={settings.enableRecursiveDecomposition || false}
-                                                onChange={(e) => onUpdate({ enableRecursiveDecomposition: e.target.checked })}
-                                                className="accent-amber-500"
-                                            />
+                                        {/* Decomposition Strategy */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-emerald-600 font-bold" title="Controls whether Prism does single-pass, bounded, or recursive decomposition">
+                                                Decomposition Strategy
+                                            </label>
+                                            <select
+                                                value={selectedDecompositionStrategy}
+                                                onChange={(e) => {
+                                                    const strategy = e.target.value as DecompositionStrategy;
+                                                    onUpdate({
+                                                        decompositionStrategy: strategy,
+                                                        enableRecursiveDecomposition: strategy === 'fixpoint_recursive',
+                                                        ...(strategy === 'off' ? { maxDecompositionPasses: 1 } : {})
+                                                    });
+                                                }}
+                                                className="w-full bg-black border border-emerald-900 rounded p-1 text-amber-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                            >
+                                                {DECOMPOSITION_STRATEGY_OPTIONS.map((option) => (
+                                                    <option key={option.value} value={option.value}>
+                                                        {option.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="text-[9px] text-emerald-800">
+                                                {DECOMPOSITION_STRATEGY_OPTIONS.find((option) => option.value === selectedDecompositionStrategy)?.description}
+                                            </p>
                                         </div>
 
                                         {/* JSON Retry Mode */}
@@ -773,6 +1135,62 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                 </p>
                             </div>
 
+                            {/* EXECUTION STRATEGY */}
+                            <div className="space-y-3">
+                                <label
+                                    className="text-xs font-bold text-emerald-700 flex items-center gap-2"
+                                    title="Linear is quality-first and default. Parallel options are advanced and can reduce context build-on flow."
+                                >
+                                    <Gauge className="w-3 h-3" /> EXECUTION STRATEGY
+                                </label>
+                                <select
+                                    value={selectedExecutionStrategy}
+                                    onChange={(e) => onUpdate({ executionStrategy: e.target.value as ExecutionStrategy })}
+                                    className="w-full bg-black border border-emerald-900 rounded p-2 text-emerald-400 text-xs focus:border-emerald-500 focus:outline-none"
+                                >
+                                    {EXECUTION_STRATEGY_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-[10px] text-emerald-700">
+                                    {EXECUTION_STRATEGY_OPTIONS.find((option) => option.value === selectedExecutionStrategy)?.description}
+                                </p>
+
+                                {selectedExecutionStrategy === 'auto_branch_parallel' && (
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] text-emerald-600 font-bold">
+                                            Branch Coupling Threshold ({(settings.autoBranchCouplingThreshold ?? 0.22).toFixed(2)})
+                                        </label>
+                                        <input
+                                            type="range"
+                                            min="0.05"
+                                            max="0.95"
+                                            step="0.01"
+                                            value={settings.autoBranchCouplingThreshold ?? 0.22}
+                                            onChange={(e) => onUpdate({ autoBranchCouplingThreshold: parseFloat(e.target.value) })}
+                                            className="w-full accent-emerald-500 h-1 bg-emerald-900 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                        <p className="text-[10px] text-emerald-800">
+                                            Lower values are stricter (fewer parallel branches), higher values allow more branch parallelism.
+                                        </p>
+                                    </div>
+                                )}
+
+                                <label className="flex items-center justify-between text-[10px] text-emerald-500">
+                                    <span title="Infers missing read-after-write task dependencies before DAG build to improve constructive output flow.">
+                                        Dependency Enrichment (Pre-DAG)
+                                    </span>
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.enableDependencyEnrichment !== false}
+                                        onChange={(e) => onUpdate({ enableDependencyEnrichment: e.target.checked })}
+                                        className="accent-emerald-500"
+                                    />
+                                </label>
+                            </div>
+
                             <div className="grid grid-cols-2 gap-3">
                                 <BioButton
                                     onClick={handleExport}
@@ -805,6 +1223,27 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onClose }) => {
                                     icon={<Bug className="w-3 h-3" />}
                                 >
                                     DOWNLOAD REPORT
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('canonical_json'); }}
+                                    variant="tech"
+                                    icon={<Download className="w-3 h-3" />}
+                                >
+                                    EXPORT CANONICAL
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('lossless_markdown'); }}
+                                    variant="tech"
+                                    icon={<Download className="w-3 h-3" />}
+                                >
+                                    EXPORT LOSSLESS MD
+                                </BioButton>
+                                <BioButton
+                                    onClick={() => { engine.downloadProject('soul_markdown'); }}
+                                    variant="primary"
+                                    icon={<Download className="w-3 h-3" />}
+                                >
+                                    EXPORT SOUL MD
                                 </BioButton>
                             </div>
                         </div>

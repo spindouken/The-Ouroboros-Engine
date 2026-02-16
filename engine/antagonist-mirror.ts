@@ -30,6 +30,9 @@
 
 import { LLMResponse } from './UnifiedLLMClient';
 import { extractWithPreference } from '../utils/safe-json';
+import { type ProjectMode } from './genesis-protocol';
+import { isValidMode } from './utils/mode-helpers';
+import type { TribunalStrictnessProfile } from '../types';
 
 // ============================================================================
 // TYPES
@@ -127,6 +130,88 @@ export interface AntagonistConfig {
 
     /** Lite Mode: Use simplified checklist prompt for small models (4B/8B) */
     isLiteMode?: boolean;
+
+    /** Strictness profile for hard/soft fail calibration */
+    strictnessProfile?: TribunalStrictnessProfile;
+}
+
+/**
+ * Get mode-specific audit criteria for Antagonist prompt construction
+ *
+ * Defines automatic failure conditions for each supported project mode.
+ *
+ * @param mode - The current project mode
+ * @returns Mode-specific audit criteria text
+ */
+export function getAuditCriteriaForMode(mode: ProjectMode): string {
+    const criteria: Record<ProjectMode, string> = {
+        software: `
+AUTOMATIC FAILURES:
+- Implementation code (import, function, class definitions)
+- Technologies NOT in Constitution
+`,
+        scientific_research: `
+AUTOMATIC FAILURES:
+- Claims without citations
+- Personal opinions without evidence
+`,
+        legal_research: `
+AUTOMATIC FAILURES:
+- Legal advice language ("you should", "I recommend")
+- Missing case/statute citations
+`,
+        creative_writing: `
+AUTOMATIC FAILURES:
+- Full prose passages (should be structural only)
+- Missing beat structure
+`,
+        general: `
+AUTOMATIC FAILURES:
+- Contradictions with Constitution
+`
+    };
+
+    return criteria[mode] || criteria.general;
+}
+
+/**
+ * Extract project mode from Constitution string.
+ * Supports JSON and plain-text/markdown formats.
+ */
+export function extractModeFromConstitutionText(constitution: string): ProjectMode {
+    // Strategy 1: JSON constitution (if serialized as JSON)
+    try {
+        const parsed = JSON.parse(constitution);
+        if (isValidMode(parsed?.mode)) {
+            return parsed.mode;
+        }
+    } catch {
+        // Continue to regex-based extraction.
+    }
+
+    // Strategy 2: Inline "mode: value" (JSON-like or YAML-like)
+    const inlineModePattern = /["']?mode["']?\s*:\s*["']?(software|scientific_research|legal_research|creative_writing|general)["']?/i;
+    const inlineMatch = constitution.match(inlineModePattern);
+    if (inlineMatch) {
+        const inlineCandidate = inlineMatch[1].trim().toLowerCase();
+        if (isValidMode(inlineCandidate)) {
+            return inlineCandidate;
+        }
+    }
+
+    // Strategy 3: Markdown section:
+    // ## PROJECT MODE
+    // scientific_research
+    const headingModePattern = /##\s*PROJECT MODE[\s\r\n]+([a-z_]+)/i;
+    const headingMatch = constitution.match(headingModePattern);
+    if (headingMatch) {
+        const candidate = headingMatch[1].trim().toLowerCase();
+        if (isValidMode(candidate)) {
+            return candidate;
+        }
+    }
+
+    return 'software';
 }
 
 // ============================================================================
@@ -150,7 +235,9 @@ export class AntagonistMirror {
         this.config = {
             model: config.model,
             temperature: config.temperature ?? 0.3, // Low temp for critical analysis
-            maxTokens: config.maxTokens ?? 2048
+            maxTokens: config.maxTokens ?? 2048,
+            isLiteMode: config.isLiteMode,
+            strictnessProfile: config.strictnessProfile ?? 'balanced'
         };
     }
 
@@ -271,16 +358,41 @@ export class AntagonistMirror {
         constitution: string,
         atomicInstruction: string
     ): string {
-        // █ ANCHOR 5.4: The Habeas Corpus Rule
+        const mode = extractModeFromConstitutionText(constitution);
+        const modeSpecificAuditCriteria = getAuditCriteriaForMode(mode);
+        const strictnessProfile = this.config.strictnessProfile || 'balanced';
+        const strictnessGuide = strictnessProfile === 'strict'
+            ? `STRICT PROFILE:
+- Treat significant incompleteness as fail when it blocks downstream tasks.
+- Prefer fail over pass when constraints are ambiguous but potentially violated.`
+            : strictnessProfile === 'local_small'
+                ? `LOCAL-SMALL PROFILE:
+- HARD FAIL only for explicit rule breaks with direct evidence.
+- Use REPAIR SUGGESTIONS for quality gaps instead of rejection whenever possible.`
+                : `BALANCED PROFILE:
+- HARD FAIL on explicit rule breaks or contradictions.
+- Use repair suggestions for non-blocking quality issues.`;
+
+        // ANCHOR 5.4: The Habeas Corpus Rule
         // LITE MODE: Simplified Specification Auditor
         if (this.config.isLiteMode) {
             return `YOU ARE THE ANTAGONIST AUDITOR (LITE MODE).
 Your goal: Verify compliance with the Input Constitution.
 
+PROJECT MODE: ${mode}
+
 **CRITICAL AUDIT CRITERIA:**
 1. **CHECK CONSISTENCY:** Does the Artifact match the Constitution?
 2. **CHECK INSTRUCTION:** Does it fulfill the specific task?
 3. **CHECK FORMAT:** Is it a Specification (good) or Implementation Code (bad)?
+4. **MODE-SPECIFIC FAILURES:**
+${modeSpecificAuditCriteria}
+5. **STRICTNESS PROFILE:** ${strictnessProfile}
+${strictnessGuide}
+
+**FAIL TAXONOMY:**
+- HARD FAIL: constitution contradiction, explicit forbidden output, or direct instruction failure.
+- SOFT FAIL: quality/completeness issues that should return repair suggestions.
 
 **INPUTS:**
 CONSTITUTION: ${constitution}
@@ -336,6 +448,20 @@ You must verify that the Artifact does NOT contradict established Decisions or C
 2. ** EXCEPTION:** Standard Design Patterns(e.g., Singleton, LOD, Caching strategies) are ALLOWED and are NOT considered "New Technologies".
 3. ** EXCEPTION:** Features explicitly requested by the User(e.g., "Gamification") MUST be allowed, even if you personally dislike them.
 
+---
+
+## MODE-SPECIFIC AUDIT CRITERIA (CRITICAL)
+
+PROJECT MODE: ${mode}
+${modeSpecificAuditCriteria}
+
+## STRICTNESS PROFILE
+${strictnessGuide}
+
+## FAIL TAXONOMY (CRITICAL)
+- HARD FAIL: constitution contradiction, explicit forbidden output, direct instruction failure.
+- SOFT FAIL: quality or style gaps; provide repair suggestions first.
+- In LOCAL-SMALL profile, avoid HARD FAIL unless evidence is explicit and direct.
 
 ---
 
@@ -435,14 +561,18 @@ Begin your audit:`;
                 explanation: e.explanation || 'No explanation provided'
             }));
 
+            const parsedVerdict = typeof parsed.verdict === 'string'
+                ? parsed.verdict
+                : (typeof parsed.verified === 'boolean' ? (parsed.verified ? 'pass' : 'fail') : 'pass');
+
             // Enforce Habeas Corpus: If verdict is 'fail', evidence is required
-            const verdict = parsed.verdict === 'fail' && evidence.length > 0 ? 'fail' :
-                parsed.verdict === 'fail' && evidence.length === 0 ? 'pass' : // Override: no evidence = pass
-                    parsed.verdict || 'pass';
+            const verdict = parsedVerdict === 'fail' && evidence.length > 0 ? 'fail' :
+                parsedVerdict === 'fail' && evidence.length === 0 ? 'pass' : // Override: no evidence = pass
+                    parsedVerdict || 'pass';
 
             return {
                 verdict: verdict as AntagonistVerdict,
-                confidence: parsed.confidence || 50,
+                confidence: parsed.confidence ?? parsed.score ?? 50,
                 evidence,
                 reasoning: parsed.reasoning || 'No reasoning provided',
                 issues: parsed.issues || [],

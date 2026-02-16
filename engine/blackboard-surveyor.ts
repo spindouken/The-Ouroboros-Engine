@@ -16,6 +16,8 @@
  * Outcome: Immediate Discard & Retry ($0 Cost)
  */
 
+import { type ProjectMode } from './genesis-protocol';
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -28,7 +30,8 @@ export type SurveyorRedFlagType =
     | 'runaway_loop'
     | 'empty_output'
     | 'conversational_fluff'
-    | 'code_generation';
+    | 'code_generation'
+    | 'mode_specific';
 
 export interface SurveyorRedFlag {
     /** Type of red flag detected */
@@ -165,6 +168,50 @@ const IMPLEMENTATION_CODE_PATTERNS: Array<{ pattern: RegExp; name: string; sever
 ];
 
 /**
+ * Mode-specific red flag patterns for early quality filtering.
+ * Task 16.1 (mode-aware pattern registry).
+ */
+export const MODE_RED_FLAGS: Record<ProjectMode, Array<{ pattern: RegExp; name: string }>> = {
+    software: [
+        { pattern: /\b(import|function|class|const\s+\w+\s*=\s*\()/gi, name: 'implementation code' }
+    ],
+    scientific_research: [
+        { pattern: /\b(I believe|obviously|clearly|everyone knows)\b/gi, name: 'opinion language' },
+        { pattern: /\b(studies show|research indicates)\b(?![^\n]*\[[^\]]+\])/gi, name: 'uncited claim' }
+    ],
+    legal_research: [
+        { pattern: /\b(you should|I recommend|my advice)\b/gi, name: 'legal advice' },
+        { pattern: /\b(the court held|the statute provides)\b(?![^\n]*\d+\s+[A-Z])/gi, name: 'missing citation' }
+    ],
+    creative_writing: [
+        { pattern: /^[A-Z][^.!?]*[.!?]\s+[A-Z][^.!?]*[.!?]/gm, name: 'full prose' }
+    ],
+    general: []
+};
+
+/**
+ * Detect mode-specific red flags without invoking any LLM.
+ * This helper is used by tests now and by Surveyor integration in Task 17.
+ */
+export function detectModeSpecificRedFlags(
+    artifact: string,
+    mode: ProjectMode
+): Array<{ name: string; match: string }> {
+    const modePatterns = MODE_RED_FLAGS[mode] || MODE_RED_FLAGS.general;
+    const matches: Array<{ name: string; match: string }> = [];
+
+    for (const { pattern, name } of modePatterns) {
+        pattern.lastIndex = 0;
+        const found = pattern.exec(artifact);
+        if (found?.[0]) {
+            matches.push({ name, match: found[0] });
+        }
+    }
+
+    return matches;
+}
+
+/**
  * Check for implementation code that should be architectural specs
  * V2.99: NOT A CODING AGENT enforcement
  */
@@ -212,10 +259,15 @@ export class BlackboardSurveyor {
      * This is a ZERO-COST operation - entirely regex/code-based
      * 
      * @param artifact - The artifact content to survey
+     * @param mode - Project mode for mode-specific pattern checks
      * @param fullResponse - Optional full response (for checking structure)
      * @returns SurveyorResult with pass/fail and detailed flags
      */
-    survey(artifact: string, fullResponse?: string): SurveyorResult {
+    survey(
+        artifact: string,
+        mode: ProjectMode = 'software',
+        fullResponse?: string
+    ): SurveyorResult {
         const redFlags: SurveyorRedFlag[] = [];
 
         // Estimate token count (rough: ~4 chars per token)
@@ -337,6 +389,19 @@ export class BlackboardSurveyor {
                 severity: 'warn',  // Warn but don't auto-discard (user may want to review)
                 message: codeCheck.recommendation,
                 match: codeCheck.codeFlags.map(f => f.pattern).join(', ')
+            });
+        }
+
+        // ========================================================================
+        // CHECK 10: Mode-Specific Red Flags
+        // ========================================================================
+        const modeSpecificFlags = detectModeSpecificRedFlags(artifact, mode);
+        for (const modeFlag of modeSpecificFlags) {
+            redFlags.push({
+                type: 'mode_specific',
+                severity: 'warn',
+                message: `Mode-specific issue detected (${mode}): ${modeFlag.name}`,
+                match: modeFlag.match
             });
         }
 

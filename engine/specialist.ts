@@ -20,7 +20,10 @@
  */
 
 import { LLMResponse } from './UnifiedLLMClient';
-import { safeYamlParse, safeJsonParse, extractWithPreference } from '../utils/safe-json';
+import { safeJsonParse, safeYamlParse } from '../utils/safe-json';
+import { getSystemPromptForMode } from './templates/specialist-templates';
+import { ProjectMode } from './genesis-protocol';
+import { extractArtifactPayload } from './artifact-normalizer';
 
 // ============================================================================
 // TYPES
@@ -44,6 +47,9 @@ export interface SpecialistInput {
 
     /** Lite Mode: Use simplified prompt for small models */
     isLiteMode?: boolean;
+
+    /** Project mode for domain-specific prompting (Requirements 2.6) */
+    mode?: ProjectMode;
 }
 
 export interface SpecialistOutput {
@@ -58,6 +64,9 @@ export interface SpecialistOutput {
 
     /** Raw response from LLM for debugging */
     rawResponse: string;
+
+    /** Prompt used for generation (for debug/attempt history) */
+    promptUsed?: string;
 
     /** Whether the specialist indicated unknown/conflict status */
     hasUnknown: boolean;
@@ -95,16 +104,19 @@ export interface SpecialistConfig {
  * Uses "Think then Commit" pattern with YAML for structured output
  */
 export function buildSpecialistPrompt(input: SpecialistInput): string {
+    // Extract mode from input (Requirements 2.6)
+    const mode = input.mode || 'software';
+    
     // LITE MODE: Simplified Code Generation Prompt for Small Models
     // V2.99 SPECIALIST LITE MODE (Performance Optimized for Small Models)
     if (input.isLiteMode) {
+        // Get mode-specific template for lite mode
+        const modeTemplate = getSystemPromptForMode(mode);
+        
         return `YOU ARE A HIGH-PERFORMANCE SYSTEM ARCHITECT (LITE MODE).
 Your goal is to generate "Project Soul" (Specs, Contracts, Architecture).
 
-**CRITICAL CONSTRAINT: NO IMPLEMENTATION CODE.**
-- DO NOT write function bodies.
-- DO NOT write full classes with logic.
-- WRITE ONLY: Interfaces, Types, API Schemas, Data Models, Strategy Documents.
+${modeTemplate}
 
 **OUTPUT FORMAT:**
 Return a single JSON object. No Markdown (except inside the artifact string).
@@ -132,49 +144,12 @@ ${input.atomicInstruction}`;
 ${input.skillInjections.map((s, i) => `### Skill ${i + 1}:\n${s}`).join('\n\n')}`
         : '';
 
+    // Get mode-specific system prompt (Requirements 2.6)
+    const modeSpecificPrompt = getSystemPromptForMode(mode);
+
     return `# SPECIALIST WORKER PROTOCOL (V2.99 Soft-Strict)
 
-## 🔴🔴🔴 CRITICAL CONSTRAINT: NOT A CODING AGENT 🔴🔴🔴
-
-**YOU DO NOT WRITE IMPLEMENTATION CODE. EVER.**
-
-You generate PROJECT SOUL artifacts:
-- System architecture specifications
-- API contracts (inputs, outputs, error cases, NOT the implementation)
-- Data model specifications (entities, relationships, constraints)
-- Strategy documents with rationale (WHY something should be done)
-- Decision matrices and trade-off analyses
-- Technical requirements with justifications
-
-**IF YOU CATCH YOURSELF WRITING ANY OF THESE, STOP IMMEDIATELY:**
-- \`import\`, \`from\`, \`require\` statements
-- \`function\`, \`const\`, \`let\`, \`var\`, \`def\`, \`class\` as code
-- Actual implementation logic with curly braces
-- Complete code files
-
-**WHAT TO DO INSTEAD:**
-
-❌ WRONG (Implementation Code):
-\`\`\`typescript
-const handleLogin = async (email: string, password: string) => {
-  const user = await db.users.findByEmail(email);
-  if (!user) throw new AuthError('User not found');
-  const valid = await bcrypt.compare(password, user.hash);
-  return valid ? generateJWT(user) : throw new AuthError('Invalid password');
-};
-\`\`\`
-
-✅ CORRECT (Architectural Specification):
-**Login Handler Specification:**
-
-| Aspect | Specification |
-|--------|---------------|
-| **Input** | email (string, RFC 5322 format), password (string, 8-128 chars) |
-| **Process** | 1. Query user by email, 2. Compare password hash (bcrypt), 3. Generate JWT on success |
-| **Output Success** | JWT token (HS256, 1hr expiry) containing userId and role |
-| **Output Failure** | 401 with message: "Invalid credentials" (no email/password leak) |
-| **Rationale** | Using bcrypt over argon2 due to broader library support in target Node.js ecosystem |
-| **Edge Cases** | Rate limit to 5 attempts/minute per IP to prevent brute force |
+${modeSpecificPrompt}
 
 ---
 
@@ -221,7 +196,7 @@ warnings:
 - Pure content only - NO conversational preamble ("Here's what I created...")
 - NO context summaries ("Based on the requirements...")
 - NO explanatory prose around the deliverable
-- Architecture, Strategy, Research, Methodology, or Plans ONLY (NOT implementation code)]
+- Follow the mode-specific output standards defined above]
 
 ---
 
@@ -232,18 +207,9 @@ warnings:
    - \`[CONFLICT: <describe the contradiction>]\` - If requirements contradict each other
    This triggers a "User Intervention Pause" instead of a hallucinated guess.
 
-2. **NOT A CODING AGENT:** You generate "Project Soul" artifacts:
-   - ✅ System Architecture specifications with rationale
-   - ✅ API contracts (inputs, outputs, error cases) in TABLE format
-   - ✅ Data model specifications (entities, constraints)
-   - ✅ Decision matrices with trade-off analysis
-   - ✅ Pseudocode for illustration purposes ONLY (not executable)
-   - ❌ NEVER: import statements, function definitions, class implementations
-   - ❌ NEVER: executable JavaScript, Python, TypeScript, or any code
+2. **ATOMIC OUTPUT:** Your response addresses ONE task with ONE clear deliverable.
 
-3. **ATOMIC OUTPUT:** Your response addresses ONE task with ONE clear deliverable.
-
-4. **PURE DELIVERABLE:** The ARTIFACT section contains ONLY the deliverable. No fluff.
+3. **PURE DELIVERABLE:** The ARTIFACT section contains ONLY the deliverable. No fluff.
 
 Begin your response now:`;
 }
@@ -257,116 +223,77 @@ Begin your response now:`;
  * V2.99 Soft-Strict Protocol: YAML-first, JSON-fallback for BLACKBOARD DELTA
  */
 export function parseSpecialistOutput(rawResponse: string, modelUsed: string): SpecialistOutput {
-    // STRATEGY 0: Lite Mode JSON Parsing (Whole Response)
-    // ONLY applied when running a node with a small custom model, as requested.
-    if (modelUsed === 'local-custom-small') {
-        try {
-            const liteJson = extractWithPreference<any>(rawResponse, 'json');
-            if (liteJson.data && liteJson.data.artifact && liteJson.data.blackboardDelta) {
-                console.log('[Specialist:LiteMode] Successfully parsed direct JSON response');
+    const normalized = extractArtifactPayload(rawResponse);
 
-                // FORCE STRING TYPE: Small models sometimes return objects/arrays for "artifact"
-                const forceString = (val: any): string => {
-                    if (typeof val === 'string') return val;
-                    if (val === null || val === undefined) return '';
-                    return JSON.stringify(val); // Safety net for object/array hallucinations
-                };
+    let trace = normalized.trace || '';
+    let artifact = normalized.artifact || rawResponse.trim();
+    let blackboardDelta: BlackboardDelta = {
+        newConstraints: normalized.blackboardDelta.newConstraints || [],
+        decisions: normalized.blackboardDelta.decisions || [],
+        warnings: normalized.blackboardDelta.warnings || []
+    };
 
-                return {
-                    trace: forceString(liteJson.data.trace),
-                    blackboardDelta: {
-                        newConstraints: liteJson.data.blackboardDelta.newConstraints || [],
-                        decisions: liteJson.data.blackboardDelta.decisions || [],
-                        warnings: liteJson.data.blackboardDelta.warnings || []
-                    },
-                    artifact: forceString(liteJson.data.artifact),
-                    rawResponse: rawResponse,
-                    hasUnknown: false,
-                    hasConflict: false,
-                    modelUsed
-                };
-            }
-        } catch (e) {
-            console.warn('[Specialist:LiteMode] Failed to parse JSON response, falling back to regex...', e);
-        }
-    }
-    // Extract sections using regex
+    // Backward-compatible protocol parse when envelope extraction did not include delta/trace.
     const traceMatch = rawResponse.match(/###\s*TRACE\s*\n([\s\S]*?)(?=###\s*BLACKBOARD DELTA|###\s*ARTIFACT|$)/i);
     const deltaMatch = rawResponse.match(/###\s*BLACKBOARD DELTA\s*\n([\s\S]*?)(?=###\s*ARTIFACT|$)/i);
     const artifactMatch = rawResponse.match(/###\s*ARTIFACT\s*\n([\s\S]*?)$/i);
 
-    const trace = traceMatch ? traceMatch[1].trim() : '';
-    let deltaRaw = deltaMatch ? deltaMatch[1].trim() : '';
-    // V2.99 Fix: Strip markdown code fences if present
-    deltaRaw = deltaRaw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
-    const artifact = artifactMatch ? artifactMatch[1].trim() : rawResponse.trim();
-
-    // Parse the blackboard delta - V2.99 Soft-Strict: YAML first, JSON fallback
-    let blackboardDelta: BlackboardDelta = {
-        newConstraints: [],
-        decisions: [],
-        warnings: []
-    };
-
-    let deltaParseSuccess = false;
-
-    // Strategy 1: Try YAML extraction (V2.99 preferred format)
-    const yamlResult = safeYamlParse<{
-        newConstraints?: string[];
-        decisions?: string[];
-        warnings?: string[];
-    }>(deltaRaw, null);
-
-    if (yamlResult.success && yamlResult.data) {
-        console.log('[Specialist:SoftStrict] Successfully parsed YAML delta');
-        blackboardDelta = {
-            newConstraints: yamlResult.data.newConstraints || [],
-            decisions: yamlResult.data.decisions || [],
-            warnings: yamlResult.data.warnings || []
-        };
-        deltaParseSuccess = true;
+    if (!trace && traceMatch) {
+        trace = traceMatch[1].trim();
     }
 
-    // Strategy 2: JSON fallback (for backward compatibility)
-    if (!deltaParseSuccess) {
-        try {
-            // Extract JSON from the delta section (may be wrapped in markdown code block)
-            const jsonMatch = deltaRaw.match(/```json\s*([\s\S]*?)\s*```/);
-            const jsonStr = jsonMatch ? jsonMatch[1] : deltaRaw;
-            const parsed = JSON.parse(jsonStr);
+    if ((!artifact || artifact === rawResponse.trim()) && artifactMatch) {
+        artifact = artifactMatch[1].trim();
+    }
 
-            console.log('[Specialist:SoftStrict] Successfully parsed JSON delta (fallback)');
+    if (
+        blackboardDelta.newConstraints.length === 0 &&
+        blackboardDelta.decisions.length === 0 &&
+        blackboardDelta.warnings.length === 0 &&
+        deltaMatch
+    ) {
+        let deltaRaw = deltaMatch[1].trim();
+        deltaRaw = deltaRaw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
+
+        const yamlResult = safeYamlParse<{
+            newConstraints?: string[];
+            decisions?: string[];
+            warnings?: string[];
+        }>(deltaRaw, null);
+
+        if (yamlResult.success && yamlResult.data) {
             blackboardDelta = {
-                newConstraints: parsed.newConstraints || [],
-                decisions: parsed.decisions || [],
-                warnings: parsed.warnings || []
+                newConstraints: yamlResult.data.newConstraints || [],
+                decisions: yamlResult.data.decisions || [],
+                warnings: yamlResult.data.warnings || []
             };
-            deltaParseSuccess = true;
-        } catch (e) {
-            // JSON parsing also failed
-        }
-    }
-
-    // Strategy 3: Structured text fallback (last resort)
-    if (!deltaParseSuccess && deltaRaw.length > 0) {
-        console.warn('[Specialist:SoftStrict] YAML and JSON parsing failed, using structured text fallback');
-        blackboardDelta.warnings.push(`Delta format issue (could not parse YAML/JSON): ${deltaRaw.substring(0, 100)}...`);
-
-        // Try to extract any bullet points as constraints/decisions
-        const lines = deltaRaw.split('\n');
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-                const content = trimmed.substring(2).trim();
-                if (content.length > 0) {
-                    // Heuristic: Add to warnings since we're not sure of the category
-                    blackboardDelta.warnings.push(content);
+        } else {
+            const jsonResult = safeJsonParse<{
+                newConstraints?: string[];
+                decisions?: string[];
+                warnings?: string[];
+            }>(deltaRaw, null);
+            if (jsonResult.success && jsonResult.data) {
+                blackboardDelta = {
+                    newConstraints: jsonResult.data.newConstraints || [],
+                    decisions: jsonResult.data.decisions || [],
+                    warnings: jsonResult.data.warnings || []
+                };
+            } else if (deltaRaw.length > 0) {
+                const warnings: string[] = [`Delta format issue (could not parse YAML/JSON): ${deltaRaw.substring(0, 100)}...`];
+                const lines = deltaRaw.split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+                        const content = trimmed.substring(2).trim();
+                        if (content.length > 0) warnings.push(content);
+                    }
                 }
+                blackboardDelta.warnings = warnings;
             }
         }
     }
 
-    // Check for UNKNOWN or CONFLICT markers
     const hasUnknown = /\[UNKNOWN:/i.test(artifact) || /\[UNKNOWN:/i.test(rawResponse);
     const hasConflict = /\[CONFLICT:/i.test(artifact) || /\[CONFLICT:/i.test(rawResponse);
 
@@ -427,6 +354,8 @@ export class Specialist {
             response.text || '',
             response.modelUsed || model
         );
+
+        output.promptUsed = prompt;
 
         return output;
     }

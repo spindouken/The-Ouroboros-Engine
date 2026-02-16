@@ -7,8 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>Status: V2.99 (MVP) - Stable Release</strong><br/>
-  <em>Some features listed in the Atlas (V3.0) are currently in development. See <a href="#-roadmap--future-work">Roadmap</a>.</em>
+  <strong>Status: V3.1</strong><br/>
 </p>
 
 <h1 align="center">♾️ The Ouroboros Engine</h1>
@@ -34,16 +33,34 @@
 
 ---
 
+## Code-Verified Reality Sync (2026-02-16)
+
+This section overrides older narrative text if there is a conflict.
+
+- Active in code now:
+  - Antagonist duel pipeline (`Specialist -> Reflexion -> Surveyor -> Antagonist`) with guided repair controls.
+  - Multi-domain mode propagation (`software`, `scientific_research`, `legal_research`, `creative_writing`, `general`) plus mode-aware prompts and checklists.
+  - Decomposition strategy controls (`off`, `bounded`, `fixpoint_recursive`) and execution strategy controls (`linear` default, optional parallel modes).
+  - Dependency enrichment, attempt-level debug history, and Node Inspector attempt transparency.
+  - Dual output pipeline: canonical lossless artifacts plus optional fluent soul document output.
+- Legacy or partial:
+  - Multi-round voting exists as a legacy module (`engine/multi-round-voting.ts`) but is not on the default runtime path.
+  - `JsonRetryDialog.tsx` exists, but JSON retry behavior is currently driven by `jsonRetryMode` runtime/settings flow.
+  - Vector embeddings are not active; current retrieval is keyword/tag matching over Dexie seed data.
+  - Full rollback/time-travel is partial (snapshot/session-codex foundations exist; full N-brick rollback remains future work).
+
+---
+
 ## 🎯 TL;DR — AI Engineering Keyword Summary
 
 | Category | Technologies & Concepts |
 |----------|------------------------|
 | **Agentic AI** | ReAct Loop • Multi-Agent Orchestration • Reflexion • Chain-of-Thought (CoT) • Iterative Self-Correction • Adversarial Verification |
 | **LLM Engineering** | Prompt Engineering • Temperature Tuning • Model Tiering • Token Optimization • Hallucination Mitigation • Maximal Agentic Decomposition (MAD) |
-| **Architecture** | Microservice-Style Agents • DAG Scheduling • State Machines • Event-Driven Design • Client-Side RAG • Vector Embeddings |
-| **Reliability** | Red-Flagging • Multi-Round Voting • Tiered Failover • Penalty Box Quarantining • Rate Limiting • Quota-Aware Scheduling |
-| **State & Memory** | State Persistence • Agent Memory Systems • Knowledge Graphs • Blackboard Architecture • Checkpointing • Time-Travel Debugging |
-| **Data Engineering** | IndexedDB (Dexie.js) • Local-First Architecture • JSON/Markdown Uniformity • Schema Validation • Chain-of-Density |
+| **Architecture** | Microservice-style agents • DAG scheduling • state machines • event-driven design • client-side RAG • keyword/tag retrieval (vector upgrade planned) |
+| **Reliability** | Red-flagging • antagonist duel verification • tiered failover • penalty box quarantining • rate limiting • quota-aware scheduling |
+| **State & Memory** | State persistence • agent memory systems • knowledge graphs • blackboard architecture • checkpointing • Session Codex snapshots |
+| **Data Engineering** | IndexedDB (Dexie.js) • local-first architecture • JSON/YAML normalization • schema validation • chain-of-density |
 | **UX & Control** | Human-in-the-Loop (HITL) • Pause/Resume State Serialization • Manual Intervention Gates • Real-Time Visualization |
 | **Observability** | Internal Reasoning Traces • Extensive Debug Logs • Execution Timelines • Replayable Sessions • Diff Visualization |
 | **ML Ops Patterns** | Small-Model Specialization + Large-Model Synthesis • Adaptive Complexity Routing • Anti-Pattern Libraries • Golden Seed Injection |
@@ -116,7 +133,7 @@ Ouroboros replaces traditional "consensus-seeking" agent swarms with a rigorous 
 1. **Red-Flagging** — Fast heuristics detecting poor outputs (hedging language, broken JSON, refusals)
 2. **Reflexion Loop** — Agent self-correction before expensive auditing
 3. **Antagonist Mirror** — Hostile agent conducting 1-on-1 duels with evidence-based rejections
-4. **Tribunal Voting** — Multi-round voting with K-threshold early termination
+4. **Tribunal Voting (Legacy Module)** - Present in codebase but not in the default runtime path
 5. **Human Escalation** — Critical veto triggers human review
 
 ### 🧠 Adaptive Model Routing
@@ -126,8 +143,8 @@ Ouroboros replaces traditional "consensus-seeking" agent swarms with a rigorous 
 
 ### 💾 Persistent State & Memory
 - **Resume Capability** — Browser crashes? Page refresh? Factory resumes exactly at the last verified brick
-- **Time-Travel (Rollback)** — Undo the last N bricks and reset state to that exact moment
-- **Agent Memory Extraction** — Successful patterns are vector-embedded for future injection
+- **Time-Travel (Rollback)** - Session Codex snapshots and undo foundations exist; full rollback workflow remains partial
+- **Agent Memory Extraction** - Pattern memory plus tag/keyword retrieval are active; semantic vector embeddings are future work
 - **Anti-Pattern Library** — Failure modes are generalized and stored as negative constraints
 
 ---
@@ -169,7 +186,7 @@ A multi-headed reliability layer ensuring 99.9% uptime through intelligent failo
 **Step 2.** "The system never 'just starts.' It establishes Global Constraints first."
 
 **Three-Step Process:**
-1. **Library Scan** — Queries "Golden Seed" Vector DB for pre-validated templates
+1. **Library Scan** - Queries Dexie Golden Seed tags/keywords for pre-validated templates (vector search is deferred)
 2. **Genesis Fallback (Magic Mode)** — If no template found, spawns high-reasoning Genesis Agent
 3. **Conflict Check** — Analyzes User Prompt vs Template for fundamental contradictions
 
@@ -256,7 +273,6 @@ A multi-headed reliability layer ensuring 99.9% uptime through intelligent failo
 
 - **Blackboard Delta** — When a brick is verified, its delta merges into Global Context
 - **Constitutional Drift Prevention** — Agent B (Step 10) explicitly sees decisions from Agent A (Step 5)
-- **Constitutional Drift Prevention** — Agent B (Step 10) explicitly sees decisions from Agent A (Step 5)
 
 ### **The Masonry** — State & Persistence Layer
 **Ongoing.** Built on Dexie.js (IndexedDB), providing enterprise-grade checkpointing.
@@ -285,6 +301,8 @@ A multi-headed reliability layer ensuring 99.9% uptime through intelligent failo
 - **Artifact Passthrough** — Receives raw JSON array, bypassing summarization
 - **Chain of Density** — Retains all Named Entities (functions, variables) exactly as they appear
 - **Strict Prohibition:** "DO NOT CHANGE A SINGLE WORD OF THE ARTIFACT CONTENT"
+- **Output Profiles (Current):** `lossless_only` (default) or `lossless_plus_soul` (optional fluent layer)
+- **Artifact Exports (Current):** canonical manifest JSON + lossless markdown + optional soul markdown
 
 ---
 
@@ -363,6 +381,11 @@ The-Ouroboros-Engine/
 ├── types.ts                       # 📝 TypeScript definitions
 └── constants.ts                   # ⚙️ Configuration & personas
 ```
+
+Code-verified notes (2026-02-16):
+- `engine/multi-round-voting.ts` exists for legacy compatibility but is not wired into the main execution path.
+- `components/JsonRetryDialog.tsx` exists, but manual dialog wiring is currently not active in runtime flow.
+- New runtime modules are active: `engine/utils/decomposition-settings.ts`, `engine/utils/execution-scheduler.ts`, `engine/soul-document-composer.ts`, and `engine/artifact-normalizer.ts`.
 
 ### The Factory Floor Pipeline
 
@@ -634,9 +657,33 @@ This prevents arbitrary rejection and forces evidence-based auditing.
 
 ---
 
-## 🔮 Roadmap & Future Work
+## Legacy / Historical Architecture Notes
 
-- [ ] **Smart Oracle** — Branching Interviews & Unknown Unknowns discovery
+The sections above are retained for project history, but these items are no longer the default direction:
+- Multi-round swarm voting: moved away from as a runtime default in favor of Antagonist duel verification for lower cost and clearer evidence.
+- Vector DB wording: current implementation is Dexie tag/keyword matching for predictable local-first behavior and lower compute overhead.
+- Manual JSON retry dialog: component exists, but active JSON retry behavior is settings-driven (`jsonRetryMode`) in Prism/runtime flow.
+
+## Future Implementation (Low Compute First)
+
+- [ ] Complete checkpoint validation gates.
+- [ ] Strict non-breaking expansion rollout for typed contracts/event-ledger/shadow validation.
+- [ ] Keep E/F/G features optional and settings-gated so default compute stays stable.
+- [ ] Expand evals suite beyond arena/model-call smoke tests: mode purity, retry convergence, security drift, and output-fidelity scoring.
+
+## Future Implementation (Low Priority / Higher Compute)
+
+- [ ] MCP + tool-use architecture track, off by default with explicit policy gates.
+- [ ] Browser/tool access policy (`off | provider_managed | mcp_controlled`) with strict budget and audit constraints.
+- [ ] Dream concepts (world-model simulation/meta-controllers) remain deferred until reliability checkpoints pass.
+
+## Roadmap & Future Work
+
+- [ ] Human-readable runtime status pass (replace cryptic semaphore/system logs in user-facing status UX).
+- [ ] Optional pause-and-patch workflow with secure manual intervention gates.
+- [ ] Optional manual node rerun modes (`leaf_only_safe` default, `subtree_reset` optional).
+- [ ] Optional document-attachment ingestion with strict size/type constraints.
+- [ ] Security-first hardening gate before enabling expansion defaults (Phase 15).
 - [ ] **Deadlock Breaking** — Paraphraser Agent for loop resolution
 - [ ] **Advanced Memory** — The Librarian, Golden Seeds, and Project Insight Layer
 - [ ] **State Rollback** — Full "Time-Travel" session restoration
@@ -670,7 +717,6 @@ If you are interested in licensing this project for commercial use, please conta
 ## 🙏 Acknowledgments
 
 - **MAKER Paper** — Inspiration for Massively Decomposed Agentic Processes (MDAPs)
-- **Agent Bible Principles** — Foundational guidelines for agent memory systems
 - The open-source community for React, Dexie.js, Zustand, and Vite
 
 ---

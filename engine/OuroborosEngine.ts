@@ -1,5 +1,17 @@
 import { UnifiedLLMClient, LLMResponse } from './UnifiedLLMClient';
-import { Graph, LogEntry, PlanItem, Node, NodeStatus, AppSettings, AppMode, OracleMessage, PotentialConstitution } from '../types';
+import {
+    Graph,
+    LogEntry,
+    PlanItem,
+    Node,
+    NodeStatus,
+    AppSettings,
+    ExecutionStrategy,
+    AppMode,
+    OracleMessage,
+    PotentialConstitution,
+    NodeAttemptRecord
+} from '../types';
 import { extractJson as safeExtractJson } from '../utils/safe-json';
 import { createPrismController, PrismController } from './prism-controller';
 // V2.99 Modules
@@ -8,7 +20,7 @@ import { Saboteur } from './saboteur';
 import { Specialist, buildLivingConstitution, SpecialistInput } from './specialist';
 import { ReflexionLoop } from './reflexion-loop';
 import { BlackboardSurveyor } from './blackboard-surveyor';
-import { AntagonistMirror } from './antagonist-mirror';
+import { AntagonistMirror, formatEvidenceForRepair } from './antagonist-mirror';
 import { BlackboardDeltaManager } from './blackboard-delta';
 import { SecurityPatcher } from './security-patcher';
 import { LosslessCompiler } from './lossless-compiler';
@@ -27,6 +39,21 @@ import { MODEL_TIERS } from '../constants';
 import { PenaltyBoxRegistry } from './PenaltyBoxRegistry';
 import { AllHeadsSeveredError } from './UnifiedLLMClient';
 import { Node as FlowNode, Edge as FlowEdge } from 'reactflow';
+import {
+    getInitialDecompositionStatus,
+    isRecursiveDecompositionActive,
+    normalizeSettingsPatch,
+    resolvePrismSettings
+} from './utils/decomposition-settings';
+import { shouldUseLiteCompatibility } from './utils/model-compatibility';
+import {
+    applyDependencySuggestions,
+    computeQueueMetrics,
+    enrichTaskDependenciesHeuristically,
+    sanitizeTaskDependencies,
+    selectRunnableBatch
+} from './utils/execution-scheduler';
+import { extractArtifactPayload } from './artifact-normalizer';
 
 export class OuroborosEngine {
     private static instance: OuroborosEngine;
@@ -93,6 +120,7 @@ export class OuroborosEngine {
             this.tasks = [];
         }
     }();
+    private lastQueueTelemetrySignature = '';
 
     private constructor() {
         this.ai = new UnifiedLLMClient(
@@ -182,13 +210,19 @@ export class OuroborosEngine {
     }
 
     public async updateSettings(newSettings: Partial<AppSettings>) {
+        const normalizedPatch = normalizeSettingsPatch(newSettings);
+
         // Update Store
-        useOuroborosStore.getState().updateSettings(newSettings);
+        useOuroborosStore.getState().updateSettings(normalizedPatch);
 
         // Update DB
         // We assume there is only one settings record, ID 1
         const currentSettings = await db.settings.get(1) || {} as AppSettings;
-        await db.settings.put({ ...currentSettings, ...newSettings, id: 1 });
+        const mergedSettings = normalizeSettingsPatch({
+            ...currentSettings,
+            ...normalizedPatch
+        });
+        await db.settings.put({ ...mergedSettings, id: 1 });
 
         const settings = useOuroborosStore.getState().settings;
         this.rateLimiter.updateConfig({
@@ -379,14 +413,23 @@ export class OuroborosEngine {
         const store = useOuroborosStore.getState();
         const settings = store.settings;
         const goal = store.livingConstitution?.originalRequirements || store.documentContent;
+        const restoredMode = store.livingConstitution?.mode || 'software';
+        const restoredTechStack = restoredMode === 'software' && (store.livingConstitution?.techStack?.length || 0) > 0
+            ? { other: store.livingConstitution?.techStack || [] }
+            : {};
 
         // Reconstruct constitution from stored data
         const constitution = {
             domain: store.livingConstitution?.domain || 'General',
-            techStack: store.livingConstitution?.techStack || [],
+            techStack: restoredTechStack,
             constraints: store.livingConstitution?.constraints?.map((c: string) => ({ description: c })) || [],
-            originalRequirements: goal
+            originalRequirements: goal,
+            mode: restoredMode,
+            modeSource: store.livingConstitution?.modeSource || 'auto_detected',
+            modeConfidence: store.livingConstitution?.modeConfidence ?? 0.5,
+            modeReasoning: store.livingConstitution?.modeReasoning || 'Mode restored from session data'
         };
+        const prismSettings = resolvePrismSettings(settings);
 
         this.addLog('info', '[Prism] Decomposing into Atomic Tasks...');
         const prismAnalysis = await this.prismController.executeFullAnalysis(
@@ -395,9 +438,8 @@ export class OuroborosEngine {
             this.getHydraAI(),
             settings.model_prism || settings.model,
             {
-                maxAtomicTasks: settings.maxAtomicTasks,
-                maxCouncilSize: settings.maxCouncilSize,
-                maxDecompositionPasses: settings.maxDecompositionPasses ?? 3
+                ...prismSettings,
+                jsonRetryMode: settings.jsonRetryMode || 'prompt'
             }
         );
 
@@ -421,6 +463,10 @@ export class OuroborosEngine {
         const settings = store.settings;
         const prismAnalysis = store.prismAnalysis;
         const goal = store.livingConstitution?.originalRequirements || store.documentContent;
+        const restoredMode = store.livingConstitution?.mode || 'software';
+        const restoredTechStack = restoredMode === 'software' && (store.livingConstitution?.techStack?.length || 0) > 0
+            ? { other: store.livingConstitution?.techStack || [] }
+            : {};
 
         if (!prismAnalysis) {
             this.addLog('error', '[Saboteur] No Prism analysis found. Cannot continue.');
@@ -431,9 +477,13 @@ export class OuroborosEngine {
         // Reconstruct constitution
         const constitution = {
             domain: store.livingConstitution?.domain || 'General',
-            techStack: store.livingConstitution?.techStack || [],
+            techStack: restoredTechStack,
             constraints: store.livingConstitution?.constraints?.map((c: string) => ({ description: c })) || [],
-            originalRequirements: goal
+            originalRequirements: goal,
+            mode: restoredMode,
+            modeSource: store.livingConstitution?.modeSource || 'auto_detected',
+            modeConfidence: store.livingConstitution?.modeConfidence ?? 0.5,
+            modeReasoning: store.livingConstitution?.modeReasoning || 'Mode restored from session data'
         };
 
         const saboteurModel = settings.model_security || settings.model || 'local-custom';
@@ -472,9 +522,23 @@ export class OuroborosEngine {
      */
     private async continueExecution(): Promise<void> {
         const store = useOuroborosStore.getState();
+        store.setExecutionStarted(true);
 
         // Critical: Check for orphaned running nodes (zombies) and reset them
-        const runningNodes = await db.nodes.where('status').anyOf('running', 'critiquing', 'synthesizing').toArray();
+        const runningNodes = await db.nodes.where('status').anyOf(
+            'queued',
+            'running',
+            'critiquing',
+            'synthesizing',
+            'reflexion',
+            'surveying',
+            'auditing',
+            'compiling',
+            'patching',
+            'verifying',
+            'planning',
+            'decomposing'
+        ).toArray();
         if (runningNodes.length > 0) {
             this.addLog('system', `[Resume] Found ${runningNodes.length} orphaned nodes. Resetting to pending...`);
             await db.nodes.where('id').anyOf(runningNodes.map(n => n.id)).modify({ status: 'pending' });
@@ -485,6 +549,7 @@ export class OuroborosEngine {
 
         // Simply call processGraph - it will pick up the pending nodes
         store.setStatus('thinking');
+        this.lastQueueTelemetrySignature = '';
         this.processGraph();
     }
 
@@ -626,36 +691,14 @@ export class OuroborosEngine {
                 if (existingIds.has(node.id)) continue;
 
                 const rawOutput = node.output || (node.data as any).artifact;
-                let finalArtifact = "";
-
-                if (typeof rawOutput === 'string') {
-                    if (rawOutput.length > 50) {
-                        try {
-                            if (rawOutput.trim().startsWith('{')) {
-                                const parsed = JSON.parse(rawOutput);
-                                finalArtifact = parsed.repaired_artifact || parsed.artifact || (parsed.repairedArtifact as any)?.content || rawOutput;
-                                if (typeof finalArtifact === 'object') {
-                                    finalArtifact = JSON.stringify(finalArtifact, null, 2);
-                                }
-                            } else {
-                                finalArtifact = rawOutput;
-                            }
-                        } catch (e) {
-                            finalArtifact = rawOutput;
-                        }
-                    }
-                } else if (typeof rawOutput === 'object' && rawOutput !== null) {
-                    finalArtifact = (rawOutput as any).repaired_artifact || (rawOutput as any).artifact || JSON.stringify(rawOutput, null, 2);
-                    if (typeof finalArtifact === 'object') {
-                        finalArtifact = JSON.stringify(finalArtifact, null, 2);
-                    }
-                }
+                const extraction = extractArtifactPayload(rawOutput);
+                const finalArtifact = extraction.artifact;
 
                 if (finalArtifact && finalArtifact.length > 20) {
                     hydratedBricks.push({
                         id: node.id,
                         instruction: node.instruction || node.label || "Unknown Task",
-                        persona: (node.data as any)?.persona || "Unknown Specialist",
+                        persona: node.persona || (node.data as any)?.persona || "Unknown Specialist",
                         artifact: finalArtifact,
                         confidence: 100,
                         verifiedAt: Date.now()
@@ -671,6 +714,13 @@ export class OuroborosEngine {
             this.addLog('info', `[Codex] Re-compiling manifestation from ${hydratedBricks.length} bricks...`);
 
             try {
+                const settings = useOuroborosStore.getState().settings;
+                this.losslessCompiler.updateConfig({
+                    outputProfile: settings.outputProfile || 'lossless_only',
+                    enableSoulForNonCreativeModes: settings.enableSoulForNonCreativeModes || false,
+                    intentTarget: settings.creativeOutputTarget || 'auto',
+                    outputFormat: 'structured'
+                });
                 const assembly = await this.losslessCompiler.compile({
                     verifiedBricks: hydratedBricks as any,
                     projectMetadata: {
@@ -682,7 +732,9 @@ export class OuroborosEngine {
                         constraints: session.livingConstitution?.constraints || [],
                         decisions: session.livingConstitution?.decisions || [],
                         warnings: session.livingConstitution?.warnings || [],
-                        originalPrompt: session.livingConstitution?.originalRequirements || session.documentContent
+                        originalPrompt: session.livingConstitution?.originalRequirements || session.documentContent,
+                        mode: session.livingConstitution?.mode,
+                        intentTarget: settings.creativeOutputTarget || 'auto'
                     }
                 });
 
@@ -699,6 +751,15 @@ export class OuroborosEngine {
         store.setDocumentContent(session.documentContent || "");
         store.setProjectPlan(session.projectPlan || []);
         store.setManifestation(hydratedManifestation);
+        const checkpointPhase = (session as any).checkpoint?.phase;
+        const executionAlreadyStarted = Boolean(
+            hydratedBricks.length > 0 ||
+            hydratedManifestation ||
+            checkpointPhase === SessionPhase.EXECUTION_STARTED ||
+            checkpointPhase === SessionPhase.EXECUTION_IN_PROGRESS ||
+            checkpointPhase === SessionPhase.COMPLETE ||
+            (session.nodes || []).some((n: any) => n.id?.startsWith('spec_') || n.id?.startsWith('compiler_'))
+        );
 
         // Update specific state directly
         useOuroborosStore.setState({
@@ -715,7 +776,8 @@ export class OuroborosEngine {
             prismAnalysis: session.prismAnalysis || null,
             livingConstitution: session.livingConstitution || store.livingConstitution,
             verifiedBricks: hydratedBricks,
-            usageMetrics: session.usageMetrics || {} // Restore Usage Metrics
+            usageMetrics: session.usageMetrics || {}, // Restore Usage Metrics
+            hasExecutionStarted: executionAlreadyStarted
         });
 
         // Trigger Graph Refresh
@@ -773,20 +835,21 @@ export class OuroborosEngine {
         const settings = await db.settings.get(1);
         if (settings) {
             useOuroborosStore.getState().updateSettings(settings);
+            const mergedSettings = useOuroborosStore.getState().settings;
             this.rateLimiter.updateConfig({
-                rpm: settings.rpm,
-                rpd: settings.rpd,
+                rpm: mergedSettings.rpm,
+                rpd: mergedSettings.rpd,
                 enabled: true
             });
-            this.apiSemaphore.max = settings.concurrency;
+            this.apiSemaphore.max = mergedSettings.concurrency;
             this.ai.updateKeys(
-                settings.apiKey,
-                settings.openaiApiKey,
-                settings.openRouterApiKey,
-                settings.localBaseUrl,
-                settings.localModelId,
-                settings.groqApiKey,
-                settings.localSmallModelId
+                mergedSettings.apiKey,
+                mergedSettings.openaiApiKey,
+                mergedSettings.openRouterApiKey,
+                mergedSettings.localBaseUrl,
+                mergedSettings.localModelId,
+                mergedSettings.groqApiKey,
+                mergedSettings.localSmallModelId
             );
         }
 
@@ -1101,7 +1164,11 @@ export class OuroborosEngine {
                     domain: genesisResult.constitution.domain,
                     techStack: Object.values(genesisResult.constitution.techStack).flat().filter(Boolean) as string[],
                     constraints: genesisResult.constitution.constraints.map(c => c.description),
-                    originalRequirements: goal
+                    originalRequirements: goal,
+                    mode: genesisResult.constitution.mode,
+                    modeSource: genesisResult.constitution.modeSource,
+                    modeConfidence: genesisResult.constitution.modeConfidence,
+                    modeReasoning: genesisResult.constitution.modeReasoning
                 });
                 this.addLog('success', `[Genesis] Domain established: ${genesisResult.constitution.domain}`);
             }
@@ -1121,15 +1188,15 @@ export class OuroborosEngine {
             // STEP 2: DYNAMIC PRISM (Decomposition)
             // ═══════════════════════════════════════════════════════════════════
             this.addLog('info', '[Prism] Decomposing into Atomic Tasks...');
+            const prismSettings = resolvePrismSettings(settings);
             const prismAnalysis = await this.prismController.executeFullAnalysis(
                 goal,
                 genesisResult.constitution,
                 this.getHydraAI(),
                 settings.model_prism || settings.model,
                 {
-                    maxAtomicTasks: settings.maxAtomicTasks ?? 10,
-                    maxCouncilSize: settings.maxCouncilSize ?? 5,
-                    maxDecompositionPasses: settings.maxDecompositionPasses ?? 3
+                    ...prismSettings,
+                    jsonRetryMode: settings.jsonRetryMode || 'prompt'
                 }
             );
 
@@ -1236,6 +1303,7 @@ export class OuroborosEngine {
         }
 
         this.addLog('info', '[Resume] Resuming active workbench state...');
+        useOuroborosStore.getState().setExecutionStarted(true);
         useOuroborosStore.getState().setStatus('thinking');
 
         // Ensure any 'running' nodes are reset to 'pending' to avoid latching
@@ -1251,6 +1319,7 @@ export class OuroborosEngine {
      */
     public async startExecution() {
         const store = useOuroborosStore.getState();
+        const settings = store.settings;
         const analysis = store.prismAnalysis;
 
         if (!analysis) {
@@ -1258,11 +1327,12 @@ export class OuroborosEngine {
             return;
         }
 
-        // Abort any existing execution loop silently to prevent zombies
-        if (this.abortController) {
-            this.abortController.abort();
-            this.abortController = null;
-        }
+        try {
+            // Abort any existing execution loop silently to prevent zombies
+            if (this.abortController) {
+                this.abortController.abort();
+                this.abortController = null;
+            }
 
         // CRITICAL: Reset semaphore to avoid deadlocks from previous aborted runs
         this.apiSemaphore.reset();
@@ -1301,6 +1371,7 @@ export class OuroborosEngine {
         }
 
         this.addLog('system', '--- V2.99 FACTORY FLOOR: ACTIVATING SQUAD ---');
+        store.setExecutionStarted(true);
         store.setStatus('thinking');
 
         // ✓ Checkpoint: Execution Started
@@ -1328,38 +1399,97 @@ export class OuroborosEngine {
         const edges: { source: string; target: string }[] = [];
         const roundId = Math.random().toString(36).substr(2, 3);
         const compilerId = `compiler_${roundId}`;
+        const councilSpecialists = Array.isArray(analysis.stepB?.council?.specialists)
+            ? analysis.stepB.council.specialists
+            : [];
+        const normalizeDependencies = (rawDependencies: unknown, currentTaskId: string): string[] => {
+            let candidates: unknown[] = [];
+
+            if (Array.isArray(rawDependencies)) {
+                candidates = rawDependencies;
+            } else if (typeof rawDependencies === 'string') {
+                const trimmed = rawDependencies.trim();
+                if (!trimmed || trimmed.toLowerCase() === 'none' || trimmed === '[]') return [];
+                candidates = trimmed.split(/[,\n|;]+/);
+            } else if (rawDependencies && typeof rawDependencies === 'object') {
+                const idsCandidate = (rawDependencies as any).ids;
+                if (Array.isArray(idsCandidate)) {
+                    candidates = idsCandidate;
+                } else if (typeof (rawDependencies as any).id === 'string') {
+                    candidates = [(rawDependencies as any).id];
+                }
+            }
+
+            return Array.from(
+                new Set(
+                    candidates
+                        .map((dep) => (typeof dep === 'string' || typeof dep === 'number') ? String(dep).trim() : '')
+                        .filter((dep) => dep.length > 0 && dep.toLowerCase() !== 'none' && dep !== '[]' && dep !== currentTaskId)
+                )
+            );
+        };
 
         // 1. Create Specialist Nodes from Atomic Tasks
-        const enabledTasks = analysis.stepB.atomicTasks.filter((t: any) => t.enabled !== false);
+        const rawTasks = Array.isArray(analysis.stepB?.atomicTasks) ? analysis.stepB.atomicTasks : [];
+        let enabledTasks = rawTasks.filter((t: any) => t && t.enabled !== false);
         const specialistNodeIds: string[] = [];
 
-        enabledTasks.forEach((task: any) => {
-            const nodeId = `spec_${task.id}_${roundId}`;
+        if (enabledTasks.length === 0) {
+            this.addLog('warn', '[Factory] No enabled tasks found after setup. Cannot activate squad.');
+            store.setExecutionStarted(false);
+            store.setStatus('idle');
+            return;
+        }
+
+        enabledTasks = enabledTasks.map((task: any, index: number) => {
+            const normalizedId = typeof task?.id === 'string' && task.id.trim().length > 0
+                ? task.id.trim()
+                : `task_${index + 1}`;
+            return { ...task, id: normalizedId };
+        });
+        enabledTasks = await this.enrichExecutionTasks(enabledTasks, settings);
+
+        enabledTasks.forEach((task: any, index: number) => {
+            const taskIdRaw = typeof task?.id === 'string' && task.id.trim().length > 0
+                ? task.id.trim()
+                : `task_${index + 1}`;
+            const taskId = taskIdRaw.replace(/\s+/g, '_');
+            const nodeId = `spec_${taskId}_${roundId}`;
             specialistNodeIds.push(nodeId);
 
             // Find the full specialist config from the council
-            let specialist = analysis.stepB.council.specialists.find((s: any) => s.id === task.assignedSpecialist);
+            const assignedSpecialist = typeof task?.assignedSpecialist === 'string' ? task.assignedSpecialist : '';
+            let specialist = councilSpecialists.find((s: any) => s.id === assignedSpecialist);
 
             // Fallback: If ID mismatch, use the first specialist (Council Lead) to avoid generic personas
-            if (!specialist && analysis.stepB.council.specialists.length > 0) {
-                this.addLog('warn', `Specialist ID '${task.assignedSpecialist}' not found. Defaulting to Council Lead.`, nodeId);
-                specialist = analysis.stepB.council.specialists[0];
+            if (!specialist && councilSpecialists.length > 0) {
+                this.addLog('warn', `Specialist ID '${assignedSpecialist || 'unknown'}' not found. Defaulting to Council Lead.`, nodeId);
+                specialist = councilSpecialists[0];
             }
+
+            const taskDependencies = normalizeDependencies(task?.dependencies, taskId);
+            const taskTitle = typeof task?.title === 'string' && task.title.trim().length > 0
+                ? task.title.trim()
+                : `Task ${index + 1}`;
+            const taskInstruction = typeof task?.instruction === 'string' && task.instruction.trim().length > 0
+                ? task.instruction.trim()
+                : `Produce the required planning artifact for "${taskTitle}".`;
 
             nodes[nodeId] = {
                 id: nodeId,
                 type: 'specialist',
-                label: task.title,
-                persona: specialist?.persona || `You are an expert in ${task.domain || 'this project'}.`,
-                department: specialist?.role || task.domain || "General",
-                instruction: task.instruction,
-                dependencies: task.dependencies.map((dId: string) => `spec_${dId}_${roundId}`),
+                label: taskTitle,
+                persona: specialist?.persona || `You are an expert in ${task?.domain || 'this project'}.`,
+                department: specialist?.role || task?.domain || "General",
+                instruction: taskInstruction,
+                dependencies: taskDependencies.map((dId: string) => `spec_${dId}_${roundId}`),
                 status: 'pending',
+                decompositionStatus: getInitialDecompositionStatus(settings),
                 output: null,
                 depth: 2,
                 data: {
-                    complexity: task.complexity,
-                    routingPath: task.routingPath,
+                    complexity: typeof task?.complexity === 'number' ? task.complexity : 5,
+                    routingPath: task?.routingPath === 'slow' ? 'slow' : 'fast',
                     temperature: specialist?.temperature
                 },
                 mode: 'refine'
@@ -1383,7 +1513,7 @@ export class OuroborosEngine {
             mode: 'refine'
         };
 
-        this.updateGraph(nodes, edges);
+        await this.updateGraph(nodes, edges);
 
         // Persist
         await db.transaction('rw', db.nodes, db.edges, async () => {
@@ -1400,7 +1530,15 @@ export class OuroborosEngine {
             }
         }, `Processing ${enabledTasks.length} tasks`);
 
-        this.processGraph();
+            this.lastQueueTelemetrySignature = '';
+            this.processGraph();
+        } catch (error: any) {
+            const message = error?.message || String(error);
+            console.error('[Factory] Failed to activate squad:', error);
+            await this.addLog('error', `[Factory] Activation failed: ${message}`);
+            store.setExecutionStarted(false);
+            store.setStatus('idle');
+        }
     }
 
     /**
@@ -1409,13 +1547,13 @@ export class OuroborosEngine {
      * Orchestrates the fractal expansion of non-atomic Epics into detailed sub-tasks.
      * 
      * @param parentNodeId - ID of the node to decompose
-     * @param context - Additional context for the decomposition (e.g. parent instruction)
      */
-    public async executeRecursivePrism(parentNodeId: string, context: string): Promise<void> {
+    public async executeRecursivePrism(parentNodeId: string): Promise<void> {
         const store = useOuroborosStore.getState();
         const settings = store.settings;
-        const maxDepth = settings.maxDecompositionPasses || 3;
-        const maxBreadth = settings.maxAtomicTasks || 20;
+        const prismSettings = resolvePrismSettings(settings);
+        const maxDepth = prismSettings.maxDecompositionPasses;
+        const maxBreadth = prismSettings.maxAtomicTasks ?? Number.MAX_SAFE_INTEGER;
 
         // 1. Fetch Parent Node
         const parentNode = await db.nodes.get(parentNodeId);
@@ -1440,11 +1578,19 @@ export class OuroborosEngine {
             // 3. Call Prism for Decomposition
             // We use the existing generateAtomicTasks but with enhanced context
             // Note: The prompt inside PrismController (P2-4) will need to handle this
+            const restoredMode = store.livingConstitution?.mode || 'software';
+            const restoredTechStack = restoredMode === 'software' && (store.livingConstitution?.techStack?.length || 0) > 0
+                ? { other: store.livingConstitution?.techStack || [] }
+                : {};
             const constitution = store.livingConstitution ? {
                 domain: store.livingConstitution.domain,
-                techStack: store.livingConstitution.techStack,
+                techStack: restoredTechStack,
                 constraints: store.livingConstitution.constraints.map(c => ({ description: c })),
-                originalRequirements: store.livingConstitution.originalRequirements
+                originalRequirements: store.livingConstitution.originalRequirements,
+                mode: restoredMode,
+                modeSource: store.livingConstitution.modeSource || 'auto_detected',
+                modeConfidence: store.livingConstitution.modeConfidence ?? 0.5,
+                modeReasoning: store.livingConstitution.modeReasoning || 'Mode restored from session data'
             } : null;
 
             // Use the parent's instruction as the "Goal" for this level
@@ -1462,29 +1608,14 @@ export class OuroborosEngine {
             // Hydra Model Selection
             const model = settings.model_prism || settings.model;
 
-            // Generate Sub-tasks
-            // We pass a synthetic "council" - effectively asking Prism to form a squad for this specific Epic
-            // In a full implementation, we might want a "Sub-Council Proposal" step here
-            // For now, we reuse the existing council or generate a transient one.
-            // Simplified: We skip explicit council generation for sub-tasks and let Prism assign roles from the main council or new ones.
-            // However, generateAtomicTasks REQUIRES a council.
-            // Let's use the Project Council from store.
-            const projectCouncil = store.council; // This object structure might differ from CouncilProposal
-
-            // Adapter to match CouncilProposal interface if needed, or we rely on Prism's flexibility
-            // Currently Prism expects a CouncilProposal object.
-            // Let's assume the store has a compatible structure or we mock it.
-            // The store.council is just a Record<string, string> (id -> role) based on types?
-            // Let's check DBProject interface... "council: any"
-            // Let's assume we can cast it or use the one from Prism output in stepB.
-
             let activeCouncil = store.prismAnalysis?.stepB?.council;
 
             if (!activeCouncil) {
                 // Fallback: Create a minimal council from the generic store if analysis is missing
-                activeCouncil = { specialists: [], rationale: "Fallback" };
+                activeCouncil = { domain: domainResult.domain, specialists: [], reasoning: "Fallback council" };
             }
 
+            const recursiveTemperature = settings.hydraSettings.autoFailover ? 0.7 : 0.5;
             const subTasks = await this.prismController.generateAtomicTasks(
                 subGoal,
                 domainResult,
@@ -1492,7 +1623,13 @@ export class OuroborosEngine {
                 activeCouncil,
                 this.getHydraAI(),
                 model,
-                settings.hydraSettings.autoFailover ? 0.7 : 0.5
+                prismSettings.maxAtomicTasks,
+                recursiveTemperature,
+                {
+                    instruction: parentNode.instruction,
+                    depth: currentDepth + 1,
+                    siblings: parentNode.childrenIds || []
+                }
             );
 
             if (subTasks.length === 0) {
@@ -1593,6 +1730,113 @@ export class OuroborosEngine {
     // startPlanning has been replaced by the Genesis/Prism/Saboteur flow in startRefinement.
     // expandPlanningTree has been replaced by the specialist factory nodes.
 
+    private resolveExecutionStrategy(settings: AppSettings): ExecutionStrategy {
+        const strategy = settings.executionStrategy;
+        if (strategy === 'dependency_parallel' || strategy === 'auto_branch_parallel' || strategy === 'linear') {
+            return strategy;
+        }
+        return 'linear';
+    }
+
+    private resolveAutoBranchThreshold(settings: AppSettings): number {
+        if (typeof settings.autoBranchCouplingThreshold !== 'number' || !Number.isFinite(settings.autoBranchCouplingThreshold)) {
+            return 0.22;
+        }
+        return Math.min(0.95, Math.max(0.05, settings.autoBranchCouplingThreshold));
+    }
+
+    private async inferDependencySuggestionsWithLLM(tasks: any[], settings: AppSettings): Promise<Array<{ id: string; dependsOn: string[] }>> {
+        if (tasks.length < 2) return [];
+
+        const model = settings.model_prism || settings.model;
+        const compactTasks = tasks.map((task) => ({
+            id: String(task.id || ''),
+            title: String(task.title || ''),
+            instruction: String(task.instruction || '').substring(0, 400),
+            dependencies: Array.isArray(task.dependencies) ? task.dependencies : []
+        }));
+
+        const prompt = `You are a task scheduler optimizer.
+Given atomic tasks, infer ONLY missing read-after-write dependencies.
+Rules:
+1) Keep graph acyclic.
+2) Use task ids exactly as provided.
+3) Do not remove existing dependencies.
+4) Return compact JSON only.
+
+Schema:
+{
+  "dependencies": [
+    { "id": "task_b", "dependsOn": ["task_a"] }
+  ]
+}
+
+Tasks:
+${JSON.stringify(compactTasks, null, 2)}`;
+
+        const response = await this.callLLM(model, prompt, { temperature: 0.1 });
+        const parsed = this.extractJson(response.text || '{}');
+        const candidates = Array.isArray(parsed)
+            ? parsed
+            : (Array.isArray(parsed?.dependencies) ? parsed.dependencies : []);
+
+        return candidates
+            .map((item: any) => ({
+                id: typeof item?.id === 'string' ? item.id.trim() : '',
+                dependsOn: Array.isArray(item?.dependsOn)
+                    ? item.dependsOn
+                        .map((dep: any) => (typeof dep === 'string' ? dep.trim() : ''))
+                        .filter((dep: string) => dep.length > 0)
+                    : []
+            }))
+            .filter((item: any) => item.id.length > 0 && item.dependsOn.length > 0);
+    }
+
+    private countTaskDependencies(tasks: any[]): number {
+        return tasks.reduce((sum, task) => {
+            if (Array.isArray(task.dependencies)) return sum + task.dependencies.length;
+            return sum;
+        }, 0);
+    }
+
+    private async enrichExecutionTasks(tasks: any[], settings: AppSettings): Promise<any[]> {
+        let enriched = sanitizeTaskDependencies(tasks);
+        const depsBefore = this.countTaskDependencies(enriched);
+
+        if (settings.enableDependencyEnrichment !== false) {
+            try {
+                const suggestions = await this.inferDependencySuggestionsWithLLM(enriched, settings);
+                if (suggestions.length > 0) {
+                    enriched = applyDependencySuggestions(enriched, suggestions);
+                    this.addLog('info', `[Scheduler] Applied ${suggestions.length} LLM dependency suggestions.`);
+                }
+            } catch (error: any) {
+                this.addLog('warn', `[Scheduler] LLM dependency enrichment skipped: ${error?.message || error}`);
+            }
+
+            enriched = enrichTaskDependenciesHeuristically(enriched);
+        }
+
+        enriched = sanitizeTaskDependencies(enriched);
+        const depsAfter = this.countTaskDependencies(enriched);
+        if (depsAfter > depsBefore) {
+            this.addLog('info', `[Scheduler] Added ${depsAfter - depsBefore} dependency edges for context flow.`);
+        }
+
+        return enriched;
+    }
+
+    private logQueueTelemetryIfChanged(allNodes: Node[]) {
+        const metrics = computeQueueMetrics(allNodes);
+        const signature = `${metrics.runnableCount}|${metrics.queuedCount}|${metrics.activeCount}|${metrics.blockedByDependencyCount}|${metrics.pendingCount}`;
+        if (signature === this.lastQueueTelemetrySignature) return;
+        this.lastQueueTelemetrySignature = signature;
+        this.addLog(
+            'info',
+            `[Factory] Queue: runnable=${metrics.runnableCount}, queued=${metrics.queuedCount}, active=${metrics.activeCount}, blocked=${metrics.blockedByDependencyCount}`
+        );
+    }
+
     public async processGraph() {
         useOuroborosStore.getState().setStatus('thinking');
         this.abortController = new AbortController();
@@ -1616,11 +1860,25 @@ export class OuroborosEngine {
             const nodesRef: Record<string, Node> = allNodes.reduce((acc, n) => ({ ...acc, [n.id]: n }), {});
 
             const pendingNodes = allNodes.filter(n => n.status === 'pending');
-            const runningNodes = allNodes.filter(n => ['running', 'critiquing', 'synthesizing'].includes(n.status));
+            const runningNodes = allNodes.filter(n => [
+                'queued',
+                'running',
+                'critiquing',
+                'synthesizing',
+                'reflexion',
+                'surveying',
+                'auditing',
+                'compiling',
+                'patching',
+                'verifying',
+                'planning',
+                'decomposing'
+            ].includes(n.status));
             const completedNodes = allNodes.filter(n => n.status === 'complete');
 
             // Debug logging for resume diagnosis
             console.log(`[processGraph] Status: pending=${pendingNodes.length}, running=${runningNodes.length}, complete=${completedNodes.length}, total=${allNodes.length}`);
+            this.logQueueTelemetryIfChanged(allNodes);
 
             if (pendingNodes.length === 0 && runningNodes.length === 0) {
                 useOuroborosStore.getState().setStatus('idle');
@@ -1630,34 +1888,35 @@ export class OuroborosEngine {
             }
 
             // Check for dependency failures
-            pendingNodes.forEach(node => {
-                const dependencies = node.dependencies.map(id => nodesRef[id]);
+            for (const node of pendingNodes) {
+                const dependencyIds = Array.isArray(node.dependencies) ? node.dependencies : [];
+                const dependencies = dependencyIds.map(id => nodesRef[id]);
                 if (dependencies.some(d => d?.status === 'error')) {
-                    this.updateNodeState(node.id, { status: 'error', output: 'Dependency failed.' });
+                    await this.updateNodeState(node.id, { status: 'error', output: 'Dependency failed.' });
                     this.addLog('error', `Dependency failed for ${node.label}. Aborting.`, node.id);
                 }
-            });
+            }
 
-            // Re-fetch pending nodes after updates
-            const activePending = await db.nodes.where('status').equals('pending').toArray();
+            const latestNodes = await db.nodes.toArray();
+            const settings = useOuroborosStore.getState().settings;
+            const executionStrategy = this.resolveExecutionStrategy(settings);
+            const selectedBatch = selectRunnableBatch(
+                latestNodes,
+                executionStrategy,
+                settings.concurrency || 1,
+                this.resolveAutoBranchThreshold(settings),
+                settings.specialistContextBudgetChars || 32000
+            );
 
-            const runnable = activePending.filter(node => {
-                return node.dependencies.every(depId => {
-                    const depNode = nodesRef[depId];
-                    // FAILSAFE: If dependency doesn't exist in the graph, treat it as satisfied (ignore it)
-                    // This prevents deadlocks if a phantom ID is injected by a hallucinating Agent
-                    if (!depNode) {
-                        console.warn(`[ProcessGraph] Warning: Node ${node.id} has missing dependency ${depId}. Treating as satisfied.`);
-                        return true;
-                    }
-                    return depNode.status === 'complete';
-                });
-            });
+            if (selectedBatch.length > 0) {
+                const selectedNodeIds = selectedBatch.map((node) => node.id);
+                console.log(`[processGraph] Selected ${selectedNodeIds.length} runnable nodes (${executionStrategy}):`, selectedNodeIds);
+                this.addLog('info', `[Factory] Dispatching ${selectedNodeIds.length} node(s) via ${executionStrategy}.`);
 
-            if (runnable.length > 0) {
-                console.log(`[processGraph] Found ${runnable.length} runnable nodes:`, runnable.map(n => n.id));
-                this.addLog('info', `[Factory] Processing ${runnable.length} nodes...`);
-                const results = await Promise.all(runnable.map(node => this.executeNode(node.id, checkRunnable, signal)));
+                await db.nodes.where('id').anyOf(selectedNodeIds).modify({ status: 'queued' as NodeStatus });
+                this.logQueueTelemetryIfChanged(await db.nodes.toArray());
+
+                const results = await Promise.all(selectedNodeIds.map((id) => this.executeNode(id, checkRunnable, signal)));
                 if (results.includes(false)) {
                     active = false;
                     useOuroborosStore.getState().setStatus('idle');
@@ -1666,13 +1925,16 @@ export class OuroborosEngine {
                 }
                 checkRunnable();
             } else {
-                console.log(`[processGraph] No runnable nodes. activePending=${activePending.length}, runningNodes=${runningNodes.length}`);
-                if (activePending.length > 0 && runningNodes.length > 0) {
+                const queueMetrics = computeQueueMetrics(latestNodes);
+                console.log(`[processGraph] No runnable nodes. pending=${queueMetrics.pendingCount}, queued=${queueMetrics.queuedCount}, active=${queueMetrics.activeCount}`);
+                if (queueMetrics.pendingCount > 0 && (queueMetrics.queuedCount + queueMetrics.activeCount) > 0) {
                     setTimeout(checkRunnable, 1000);
-                } else if (activePending.length > 0 && runningNodes.length === 0) {
+                } else if (queueMetrics.pendingCount > 0 && (queueMetrics.queuedCount + queueMetrics.activeCount) === 0) {
+                    const activePending = latestNodes.filter((node) => node.status === 'pending');
                     // Check why nodes can't run - log their dependencies
                     activePending.slice(0, 3).forEach(node => {
-                        const unmetDeps = node.dependencies.filter(depId => nodesRef[depId]?.status !== 'complete');
+                        const dependencyIds = Array.isArray(node.dependencies) ? node.dependencies : [];
+                        const unmetDeps = dependencyIds.filter(depId => nodesRef[depId]?.status !== 'complete');
                         console.log(`[processGraph] Node ${node.id} blocked by:`, unmetDeps.map(d => `${d} (${nodesRef[d]?.status || 'MISSING'})`));
                     });
                     this.addLog('error', 'Execution Deadlock: Dependencies cannot be satisfied.');
@@ -1711,6 +1973,102 @@ export class OuroborosEngine {
         this.processGraph();
     }
 
+    private scoreTextRelevance(query: string, candidate: string): number {
+        const normalize = (value: string) =>
+            value
+                .toLowerCase()
+                .replace(/[^a-z0-9\s]/g, ' ')
+                .split(/\s+/)
+                .filter((token) => token.length >= 4);
+        const queryTokens = new Set(normalize(query));
+        if (queryTokens.size === 0) return 0;
+        const candidateTokens = normalize(candidate);
+        let overlap = 0;
+        for (const token of candidateTokens) {
+            if (queryTokens.has(token)) overlap++;
+        }
+        return overlap / queryTokens.size;
+    }
+
+    private appendSectionsWithinBudget(base: string, sections: string[], budgetChars: number): string {
+        let output = base;
+        const limit = Math.max(2000, budgetChars);
+        for (const section of sections) {
+            if (!section || section.trim().length === 0) continue;
+            const block = `\n\n${section}`;
+            if (output.length + block.length > limit) {
+                const remaining = limit - output.length;
+                if (remaining > 200) {
+                    output += block.substring(0, remaining);
+                    output += '\n\n[CONTEXT TRUNCATED BY BUDGET]';
+                }
+                break;
+            }
+            output += block;
+        }
+        return output;
+    }
+
+    private async buildSpecialistContext(
+        node: Node,
+        store: ReturnType<typeof useOuroborosStore.getState>,
+        settings: AppSettings
+    ): Promise<string> {
+        const deltas = store.verifiedBricks.map((b: any) => b.delta).filter(Boolean);
+        let context = buildLivingConstitution(
+            store.documentContent || "No requirements provided.",
+            store.livingConstitution,
+            deltas
+        );
+
+        if (store.projectInsights && store.projectInsights.length > 10) {
+            context += `\n\n## PROJECT INSIGHTS & ARCHITECTURAL PATTERNS\n(Synthesized from previous work - TREAT AS BINDING DECISIONS)\n${store.projectInsights}`;
+        }
+
+        const contextMode = settings.specialistContextMode || 'top_k_relevant_bricks';
+        const contextTopK = Math.max(1, settings.specialistContextTopK || 6);
+        const contextBudgetChars = settings.specialistContextBudgetChars || 32000;
+        const extraSections: string[] = [];
+
+        if (contextMode === 'dependency_artifacts') {
+            const dependencyIds = Array.isArray(node.dependencies) ? node.dependencies : [];
+            if (dependencyIds.length > 0) {
+                const depNodes = await db.nodes.bulkGet(dependencyIds);
+                const snippets = depNodes
+                    .filter((dep): dep is Node => Boolean(dep?.output))
+                    .map((dep) => `### Dependency: ${dep.label}\n${(dep.output || '').substring(0, 2000)}`);
+                if (snippets.length > 0) {
+                    extraSections.push(`## DEPENDENCY ARTIFACT CONTEXT\n${snippets.join('\n\n')}`);
+                }
+            }
+        } else if (contextMode === 'top_k_relevant_bricks' || contextMode === 'full_verified_bricks') {
+            const bricks = [...store.verifiedBricks];
+            const ranked = bricks
+                .map((brick: any) => ({
+                    brick,
+                    score: this.scoreTextRelevance(
+                        node.instruction || '',
+                        `${brick.instruction || ''}\n${brick.artifact || ''}`
+                    )
+                }))
+                .sort((a, b) => b.score - a.score);
+            const selected = contextMode === 'full_verified_bricks'
+                ? ranked
+                : ranked.slice(0, contextTopK);
+            const snippets = selected
+                .filter((item) => item.brick?.artifact)
+                .map((item) => {
+                    const brick = item.brick;
+                    return `### Brick: ${brick.id} (${brick.persona})\nInstruction: ${brick.instruction}\nRelevance: ${item.score.toFixed(2)}\n${(brick.artifact || '').substring(0, 2500)}`;
+                });
+            if (snippets.length > 0) {
+                extraSections.push(`## VERIFIED BRICK CONTEXT (${contextMode})\n${snippets.join('\n\n')}`);
+            }
+        }
+
+        return this.appendSectionsWithinBudget(context, extraSections, contextBudgetChars);
+    }
+
     private async executeNode(nodeId: string, checkRunnableCallback: () => void, signal: AbortSignal, retryCount: number = 0): Promise<boolean> {
         this.addLog('info', `▷ EXEC START: ${nodeId}`, nodeId);
         console.log(`[executeNode] START: ${nodeId}`);
@@ -1733,20 +2091,16 @@ export class OuroborosEngine {
 
         // P2-7: ReCAP Recursive Check (V2.99)
         // If the node is a specialist and hasn't been decomposed yet, try to explode it.
-        if (node.type === 'specialist' && node.decompositionStatus === 'pending') {
+        const shouldUseRecursiveDecomposition =
+            isRecursiveDecompositionActive(useOuroborosStore.getState().settings);
+        if (shouldUseRecursiveDecomposition && node.type === 'specialist' && node.decompositionStatus === 'pending') {
             this.addLog('info', `[ReCAP] Assessing decomposition for ${node.label} (Depth: ${node.depth || 0})...`, nodeId);
 
             // Mark as analyzing to prevent race conditions
             await this.updateNodeState(nodeId, { status: 'running' });
 
             // Execute Recursive Prism
-            // Get max depth from settings or default to 3
-            const settings = useOuroborosStore.getState().settings;
-            // Assuming maxRecursiveDepth might be added to settings later, default to 3 for now.
-            // Or use a constant if not in settings type yet.
-            const maxDepth = (settings as any).maxRecursiveDepth || 3;
-
-            await this.executeRecursivePrism(nodeId, maxDepth);
+            await this.executeRecursivePrism(nodeId);
 
             // Re-fetch node to check result
             const updatedNode = await db.nodes.get(nodeId);
@@ -1762,19 +2116,22 @@ export class OuroborosEngine {
             // Flow continues downward...
         }
 
-        let status: NodeStatus = 'running';
-        if (node.type === 'specialist') status = 'critiquing';
-        if ((node.type as string) === 'lossless_compiler') status = 'synthesizing';
-
-        await this.updateNodeState(nodeId, { status });
-        console.log(`[executeNode] Status set to '${status}': ${nodeId}`);
+        let activeStatus: NodeStatus = 'running';
+        if (node.type === 'specialist') activeStatus = 'critiquing';
+        if ((node.type as string) === 'lossless_compiler') activeStatus = 'synthesizing';
 
         const startTime = Date.now();
         let lastPrompt = "";
         let rawResponse = "";
+        const attemptHistory: NodeAttemptRecord[] = [...(node.debugData?.attempts || [])];
+        let priorTribunalFeedback = "";
 
         try {
             console.log(`[executeNode] Acquiring semaphore: ${nodeId}`);
+            if (node.status !== 'queued') {
+                await this.updateNodeState(nodeId, { status: 'queued' });
+            }
+            this.addLog('info', `⏳ QUEUED: ${nodeId.substring(0, 6)}`, nodeId);
             this.addLog('info', `⏳ SEM WAIT: ${nodeId.substring(0, 6)}`, nodeId);
             await this.apiSemaphore.acquire();
             this.addLog('info', `✅ SEM ACQ: ${nodeId.substring(0, 6)}`, nodeId);
@@ -1782,6 +2139,7 @@ export class OuroborosEngine {
 
             if (signal.aborted) {
                 this.apiSemaphore.release();
+                await this.updateNodeState(nodeId, { status: 'pending' });
                 return false;
             }
 
@@ -1791,8 +2149,13 @@ export class OuroborosEngine {
             this.addLog('info', `✅ RATE ACQ: ${nodeId.substring(0, 6)}`, nodeId);
             this.rateLimiter.recordRequest();
             console.log(`[executeNode] Rate limiter passed: ${nodeId}`);
+            await this.updateNodeState(nodeId, { status: activeStatus });
+            console.log(`[executeNode] Status set to '${activeStatus}': ${nodeId}`);
 
             const settings = useOuroborosStore.getState().settings;
+            const smallModelCompatibilityMode = settings.smallModelCompatibilityMode || 'auto';
+            const useLiteCompatibilityForModel = (modelId: string): boolean =>
+                shouldUseLiteCompatibility(modelId, smallModelCompatibilityMode);
 
             // Ensure keys are up to date
             const googleKey = this.apiKey || process.env.API_KEY || "";
@@ -1834,34 +2197,34 @@ export class OuroborosEngine {
                 const generationConfig = {
                     temperature: node.data?.temperature || currentTemp
                 };
+                const attemptRecord: NodeAttemptRecord = {
+                    attemptNumber: attempts,
+                    startedAt: Date.now(),
+                    modelUsed: selectedModel,
+                    temperature: generationConfig.temperature,
+                    outcome: 'running'
+                };
 
                 if (node.type === 'specialist') {
                     this.addLog('info', `${node.label} [V2.99 Specialist] activating... (Attempt ${attempts})`, nodeId);
 
                     // --- V2.99 SPECIALIST PROTOCOL ---
                     const store = useOuroborosStore.getState();
-                    const deltas = store.verifiedBricks.map(b => b.delta).filter(Boolean);
-
-                    // Convert constitution object to string for the V2.99 components
-                    let livingConstitutionString = buildLivingConstitution(
-                        store.documentContent || "No requirements provided.",
-                        store.livingConstitution,
-                        deltas
-                    );
-
-                    // [V2.99] Inject Project Insights (Mid-Term Memory)
-                    if (store.projectInsights && store.projectInsights.length > 10) {
-                        livingConstitutionString += `\n\n## 🔍 PROJECT INSIGHTS & ARCHITECTURAL PATTERNS\n(Synthesized from previous work - TREAT AS BINDING DECISIONS)\n${store.projectInsights}`;
-                    }
+                    const livingConstitutionString = await this.buildSpecialistContext(node, store, settings);
+                    const retryGuidance = priorTribunalFeedback
+                        ? `\n\n## RETRY GUIDANCE FROM LAST TRIBUNAL REJECTION\n${priorTribunalFeedback}\nAddress all listed issues before adding new content.`
+                        : '';
+                    const effectiveInstruction = `${instructionContext}${retryGuidance}`;
 
                     // 2. Prepare Input
                     const input: SpecialistInput = {
-                        atomicInstruction: node.instruction,
+                        atomicInstruction: effectiveInstruction,
                         livingConstitution: livingConstitutionString,
                         skillInjections: [],
                         persona: node.persona,
                         complexity: 5,
-                        isLiteMode: selectedModel === 'local-custom-small'
+                        isLiteMode: useLiteCompatibilityForModel(selectedModel),
+                        mode: ((store.livingConstitution as any)?.mode || 'software')
                     };
 
                     // [V2.99 gap] Adaptive Routing
@@ -1877,10 +2240,18 @@ export class OuroborosEngine {
                         }
                     }
 
+                    // Re-resolve lite compatibility after any model routing changes.
+                    input.isLiteMode = useLiteCompatibilityForModel(selectedModel);
+
                     // 3. Execute Specialist (Generation)
                     const output = await this.specialist.execute(input, selectedModel);
                     if (output.modelUsed) selectedModel = output.modelUsed;
                     rawResponse = output.rawResponse;
+                    lastPrompt = output.promptUsed || '';
+                    attemptRecord.modelUsed = selectedModel;
+                    attemptRecord.promptUsed = lastPrompt;
+                    attemptRecord.rawResponse = output.rawResponse;
+                    attemptRecord.artifactPreview = output.artifact.substring(0, 500);
 
                     // [V2.99 gap] Red Flag Validation
                     if (settings.enableRedFlagging) {
@@ -1893,10 +2264,26 @@ export class OuroborosEngine {
 
                         if (!validation.passed) {
                             this.addLog('warn', `Red Flag Detection: ${validation.flags.map(f => f.type).join(', ')}`, nodeId);
+                            attemptRecord.redFlags = validation.flags.map((f: any) => f.type);
                             // Retry logic handled by loop
                             if (attempts < maxAttempts) {
                                 this.addLog('info', `Retrying with temp adjustments...`, nodeId);
                                 currentTemp = Math.min(0.9, currentTemp + 0.1); // Bump temp to break loops
+                                attemptRecord.outcome = 'retry_scheduled';
+                                attemptRecord.notes = 'Red flag validation requested retry.';
+                                attemptRecord.completedAt = Date.now();
+                                attemptHistory.push(attemptRecord);
+                                await this.updateNodeState(nodeId, {
+                                    debugData: {
+                                        ...(node.debugData || {}),
+                                        lastPrompt,
+                                        rawResponse,
+                                        timestamp: Date.now(),
+                                        modelUsed: selectedModel,
+                                        executionTimeMs: Date.now() - startTime,
+                                        attempts: attemptHistory
+                                    }
+                                });
                                 continue;
                             }
                         }
@@ -1911,16 +2298,26 @@ export class OuroborosEngine {
 
                     this.addLog('info', `[Reflexion] Critiquing with model: ${targetReflexionModel}`, nodeId);
 
-                    const reflexionResult = await this.reflexionLoop.reflect(output, input.atomicInstruction, livingConstitutionString);
+                    const reflexionResult = await this.reflexionLoop.reflect(
+                        output,
+                        input.atomicInstruction,
+                        livingConstitutionString,
+                        priorTribunalFeedback || undefined
+                    );
+                    attemptRecord.reflexionApplied = reflexionResult.wasRepaired;
 
                     const finalArtifact = reflexionResult.finalOutput.artifact;
 
                     // 5. Blackboard Surveyor (Sanity Check)
-                    const survey = this.blackboardSurveyor.survey(finalArtifact);
+                    const surveyMode = ((store.livingConstitution as any)?.mode || 'software') as any;
+                    const survey = this.blackboardSurveyor.survey(finalArtifact, surveyMode);
+                    attemptRecord.surveyPassed = survey.passed;
                     if (!survey.passed) {
                         this.addLog('warn', `Surveyor Refusal: ${survey.summary}`, nodeId);
                         resultText = `[SURVEYOR REFUSAL] ${survey.summary}`;
                         score = 0;
+                        attemptRecord.outcome = 'survey_rejected';
+                        attemptRecord.notes = survey.summary;
                     } else {
                         // 6. Antagonist Protocol (Tribunal)
                         let isVerified = true;
@@ -1932,37 +2329,91 @@ export class OuroborosEngine {
                             const targetAntagonistModel = settings.model_antagonist || settings.model;
                             this.antagonistMirror.updateConfig({
                                 model: targetAntagonistModel,
-                                isLiteMode: targetAntagonistModel === 'local-custom-small'
+                                isLiteMode: useLiteCompatibilityForModel(targetAntagonistModel),
+                                strictnessProfile: settings.tribunalStrictnessProfile || 'balanced'
                             });
                             this.addLog('info', `[Antagonist] Using model: ${targetAntagonistModel}`, nodeId);
+
+                            const guidedRepairMode = settings.guidedRepairMode || 'auto';
+                            const useGuidedRepair = guidedRepairMode === 'always' || guidedRepairMode === 'auto';
+                            const onRepair = useGuidedRepair
+                                ? async (evidence: any[], suggestions: string[]) => {
+                                    const repairEvidence = formatEvidenceForRepair(evidence, suggestions);
+                                    const targetedInstruction = `${instructionContext}
+
+## FAILED ARTIFACT FROM PRIOR ATTEMPT
+${finalArtifact}
+
+${repairEvidence}
+
+Output only the repaired artifact.`;
+                                    const repairInput: SpecialistInput = {
+                                        ...input,
+                                        atomicInstruction: targetedInstruction,
+                                        isLiteMode: useLiteCompatibilityForModel(targetReflexionModel)
+                                    };
+                                    const repairOutput = await this.specialist.execute(
+                                        repairInput,
+                                        targetReflexionModel,
+                                        { temperature: 0.2, maxTokens: 4096 }
+                                    );
+                                    return repairOutput.artifact;
+                                }
+                                : undefined;
 
                             this.addLog('info', `[${node.label}] Facing the Tribunal (Antagonist)...`, nodeId);
                             const duel = await this.antagonistMirror.conductDuel(
                                 finalArtifact,
                                 livingConstitutionString,
-                                node.instruction
+                                node.instruction,
+                                onRepair
                             );
                             antagonistDuel = duel;
                             isVerified = duel.isVerified;
-                            tribunalReasoning = duel.initialAudit.reasoning;
+                            tribunalReasoning = duel.initialAudit.reasoning || 'Tribunal audit completed';
+                            attemptRecord.tribunal = {
+                                verdict: isVerified ? 'pass' : 'fail',
+                                reasoning: tribunalReasoning,
+                                confidence: duel.initialAudit.confidence,
+                                evidenceCount: duel.initialAudit.evidence?.length || 0,
+                                suggestionCount: duel.initialAudit.repairSuggestions?.length || 0,
+                                outcome: duel.outcome
+                            };
 
                             if (!isVerified) {
                                 this.addLog('warn', `Tribunal Rejected: ${tribunalReasoning}`, nodeId);
+                                const latestFailAudit = duel.repairAttempt?.reauditResult?.verdict === 'fail'
+                                    ? duel.repairAttempt.reauditResult
+                                    : duel.initialAudit;
+                                priorTribunalFeedback = formatEvidenceForRepair(
+                                    latestFailAudit.evidence || [],
+                                    latestFailAudit.repairSuggestions || []
+                                );
                             } else {
                                 this.addLog('success', `Tribunal Verified.`, nodeId);
+                                priorTribunalFeedback = '';
                             }
+                        } else {
+                            attemptRecord.tribunal = {
+                                verdict: 'pass',
+                                reasoning: tribunalReasoning,
+                                outcome: 'bypassed'
+                            };
                         }
 
                         if (isVerified) {
-                            resultText = finalArtifact;
+                            const approvedArtifact = antagonistDuel?.finalArtifact || finalArtifact;
+                            resultText = approvedArtifact;
                             score = 100;
+                            attemptRecord.outcome = 'verified';
+                            attemptRecord.artifactPreview = approvedArtifact.substring(0, 500);
 
                             // V2.99: Construct Verified Brick
                             const verifiedBrick: any = {
                                 id: node.id,
                                 persona: node.persona,
                                 instruction: node.instruction,
-                                artifact: finalArtifact,
+                                artifact: approvedArtifact,
                                 confidence: 100, // 100% confidence for Tribunal-Verified bricks
                                 verifiedAt: Date.now(),
                                 delta: output.blackboardDelta || { newConstraints: [], decisions: [], warnings: [] }
@@ -1994,15 +2445,23 @@ export class OuroborosEngine {
                             // Map result data for UI
                             resultData = {
                                 ...resultData,
-                                artifact: finalArtifact,
+                                artifact: approvedArtifact,
                                 verified: true,
-                                antagonistDuel
+                                antagonistDuel,
+                                tribunalReasoning
                             };
                             executionValid = true; // Loop success!
                         } else {
                             resultText = `[TRIBUNAL REJECTION] ${tribunalReasoning}`;
                             score = 0;
-                            resultData = { ...resultData, verified: false };
+                            attemptRecord.outcome = 'tribunal_rejected';
+                            attemptRecord.notes = tribunalReasoning;
+                            resultData = {
+                                ...resultData,
+                                verified: false,
+                                antagonistDuel,
+                                tribunalReasoning
+                            };
 
                             // [V2.99 gap] Predictive Cost Scaling
                             if (settings.enablePredictiveCostScaling && attempts < maxAttempts) {
@@ -2080,48 +2539,15 @@ export class OuroborosEngine {
 
                                 completedNodes.forEach(node => {
                                     if (!existingNodeIds.has(node.id) && ((node.type as string) === 'specialist' || (node.type as string) === 'custom')) {
-                                        // Re-construct a brick from the node data
-                                        // [V2.99 Fix] Use correct property access like MD download does
                                         const rawOutput = node.output || (node.data as any).artifact;
-
-                                        let finalArtifact = "";
-
-                                        if (typeof rawOutput === 'string') {
-                                            if (rawOutput.length > 50) {
-                                                // Try to parse if it looks like JSON wrapper
-                                                try {
-                                                    if (rawOutput.trim().startsWith('{')) {
-                                                        const parsed = JSON.parse(rawOutput);
-                                                        finalArtifact = parsed.repaired_artifact || parsed.artifact || (parsed.repairedArtifact as any)?.content || rawOutput;
-                                                        // Handle nested structure from debug report
-                                                        if (typeof finalArtifact === 'object') {
-                                                            if (parsed.repaired_artifact && typeof parsed.repaired_artifact === 'object') {
-                                                                finalArtifact = JSON.stringify(parsed.repaired_artifact, null, 2);
-                                                            } else {
-                                                                finalArtifact = JSON.stringify(finalArtifact, null, 2);
-                                                            }
-                                                        }
-                                                    } else {
-                                                        finalArtifact = rawOutput;
-                                                    }
-                                                } catch (e) {
-                                                    finalArtifact = rawOutput; // Treat as smooth text
-                                                }
-                                            }
-                                        } else if (typeof rawOutput === 'object' && rawOutput !== null) {
-                                            // It's already an object in DB
-                                            finalArtifact = (rawOutput as any).repaired_artifact || (rawOutput as any).artifact || JSON.stringify(rawOutput, null, 2);
-                                            if (typeof finalArtifact === 'object') {
-                                                finalArtifact = JSON.stringify(finalArtifact, null, 2);
-                                            }
-                                        }
+                                        const extraction = extractArtifactPayload(rawOutput);
+                                        const finalArtifact = extraction.artifact;
 
                                         if (finalArtifact && finalArtifact.length > 20) {
-                                            // Mock a verified brick structure
                                             allVerifiedBricks.push({
                                                 id: node.id,
                                                 instruction: node.instruction || node.label || "Unknown Task",
-                                                persona: (node.data as any).persona || "Unknown Specialist",
+                                                persona: node.persona || (node.data as any).persona || "Unknown Specialist",
                                                 artifact: finalArtifact,
                                                 confidence: 100,
                                                 verifiedAt: Date.now()
@@ -2149,6 +2575,13 @@ export class OuroborosEngine {
                             this.addLog('success', 'Security Scan Passed.', nodeId);
                         }
 
+                        this.losslessCompiler.updateConfig({
+                            outputProfile: settings.outputProfile || 'lossless_only',
+                            enableSoulForNonCreativeModes: settings.enableSoulForNonCreativeModes || false,
+                            intentTarget: settings.creativeOutputTarget || 'auto',
+                            outputFormat: 'structured'
+                        });
+
                         const assembly = await this.losslessCompiler.compile({
                             verifiedBricks: allVerifiedBricks as any,
                             projectMetadata: {
@@ -2160,7 +2593,9 @@ export class OuroborosEngine {
                                 constraints: useOuroborosStore.getState().livingConstitution.constraints,
                                 decisions: useOuroborosStore.getState().livingConstitution.decisions,
                                 warnings: useOuroborosStore.getState().livingConstitution.warnings,
-                                originalPrompt: useOuroborosStore.getState().livingConstitution.originalRequirements
+                                originalPrompt: useOuroborosStore.getState().livingConstitution.originalRequirements,
+                                mode: useOuroborosStore.getState().livingConstitution.mode as any,
+                                intentTarget: settings.creativeOutputTarget || 'auto'
                             }
                         });
                         resultText = assembly.manifestation;
@@ -2177,25 +2612,61 @@ export class OuroborosEngine {
                     // V2.99 Turbo Mode Logic
                     const complexity = node.data?.complexity || 5;
                     const isTurbo = settings.turboMode || (settings.autoTurboMode !== false && complexity < (settings.turboComplexityThreshold || 5));
+                    const tribunalRejectedThisAttempt = attemptRecord.outcome === 'tribunal_rejected';
 
                     const validation = this.redFlagValidator.validate(resultText, score, isTurbo);
                     await this.updateNodeState(nodeId, { redFlags: validation.flags });
 
                     if (!validation.passed) {
                         this.addLog('warn', `Red Flags: ${validation.flags.map((f: any) => f.type).join(', ')}`, nodeId);
+                        attemptRecord.redFlags = validation.flags.map((f: any) => f.type);
                         if (validation.shouldRetry && attempts < maxAttempts) {
                             const retryMsg = await this.redFlagValidator.retry(nodeId, validation.suggestedTemperature || currentTemp);
                             this.addLog('warn', retryMsg, nodeId);
                             currentTemp = validation.suggestedTemperature || currentTemp;
+                            attemptRecord.outcome = 'retry_scheduled';
+                            attemptRecord.notes = retryMsg;
                         } else {
-                            executionValid = true;
+                            executionValid = !tribunalRejectedThisAttempt;
+                            if (tribunalRejectedThisAttempt) {
+                                attemptRecord.outcome = attempts < maxAttempts ? 'retry_scheduled' : 'tribunal_rejected';
+                            }
                         }
                     } else {
-                        executionValid = true;
+                        executionValid = !tribunalRejectedThisAttempt;
+                        if (tribunalRejectedThisAttempt && attempts < maxAttempts) {
+                            attemptRecord.outcome = 'retry_scheduled';
+                            attemptRecord.notes = 'Tribunal rejection requires retry.';
+                        }
                     }
                 } else {
                     // If red flagging is disabled or already valid, ensure we exit loop
-                    executionValid = true;
+                    executionValid = attemptRecord.outcome !== 'tribunal_rejected';
+                }
+
+                if (!attemptRecord.completedAt) {
+                    if (attemptRecord.outcome === 'running') {
+                        if (executionValid && score > 0) {
+                            attemptRecord.outcome = 'verified';
+                        } else if (!executionValid) {
+                            attemptRecord.outcome = 'retry_scheduled';
+                        } else {
+                            attemptRecord.outcome = 'failed';
+                        }
+                    }
+                    attemptRecord.completedAt = Date.now();
+                    attemptHistory.push(attemptRecord);
+                    await this.updateNodeState(nodeId, {
+                        debugData: {
+                            ...(node.debugData || {}),
+                            lastPrompt,
+                            rawResponse,
+                            timestamp: Date.now(),
+                            modelUsed: selectedModel,
+                            executionTimeMs: Date.now() - startTime,
+                            attempts: attemptHistory
+                        }
+                    });
                 }
             } // End while loop
 
@@ -2255,7 +2726,14 @@ export class OuroborosEngine {
                     output: resultText,
                     score: score,
                     data: resultData,
-                    debugData: { lastPrompt, rawResponse, timestamp: Date.now(), modelUsed: selectedModel, executionTimeMs: Date.now() - startTime }
+                    debugData: {
+                        lastPrompt,
+                        rawResponse,
+                        timestamp: Date.now(),
+                        modelUsed: selectedModel,
+                        executionTimeMs: Date.now() - startTime,
+                        attempts: attemptHistory
+                    }
                 });
             } catch (updateError) {
                 console.error(`[executeNode] Final node update failed for ${nodeId}`, updateError);
@@ -2384,158 +2862,24 @@ export class OuroborosEngine {
      * Download project in various formats
      * 
      * @param format - Output format:
-     *   - 'markdown': Project Bible (comprehensive specification document)
+     *   - 'markdown': Active manifestation (respects output profile)
      *   - 'json': Raw project data in JSON format
+     *   - 'canonical_json': Canonical immutable manifest JSON
+     *   - 'lossless_markdown': Canonical stitched markdown (lossless)
+     *   - 'soul_markdown': Fluent projection generated from canonical
      *   - 'scaffold': ZIP file with ready-to-code project structure (Pillar 3)
      */
-    public async downloadProject(format: 'markdown' | 'json' | 'scaffold' = 'markdown') {
+    public async downloadProject(
+        format: 'markdown' | 'json' | 'scaffold' | 'canonical_json' | 'lossless_markdown' | 'soul_markdown' = 'markdown'
+    ) {
         const store = useOuroborosStore.getState();
 
         if (format === 'scaffold') {
-            // Pillar 3: Generate and download project scaffold ZIP
             await this.downloadProjectScaffold();
-        } else if (format === 'markdown') {
-            // Project Bible Download (v2.99)
-            // The lossless_compiler node has already compiled the bricks into a manifestation.
-            // We simply retrieve that output rather than re-compiling.
-            const date = new Date().toISOString().split('T')[0];
+            return;
+        }
 
-            // [V2.99 Fix] "The Amnesia Cure" - Download Edition
-            // Instead of trusting the potentially stale store.manifestation or a single node output,
-            // we FORCE a fresh re-compilation using the Deep Hydration logic to ensure we get ALL bricks.
-            this.addLog('info', '[Download] Generative Export: Re-compiling Project Bible from full history...');
-
-            try {
-                // 1. Hydrate ALL Verified Bricks (Deep Scan)
-                const store = useOuroborosStore.getState();
-                let allVerifiedBricks = [...store.verifiedBricks];
-
-                // Fetch full history from DB
-                const allNodes = await db.nodes.toArray();
-
-                // [V2.99 Fix - Corrected Property Access]
-                // Historical nodes store the final text in `node.output` (root) 
-                // OR `node.data.artifact`. `node.data.output` does NOT exist.
-                const completedNodes = allNodes.filter(n =>
-                    n.status === 'complete' &&
-                    (n.output || (n.data && (n.data as any).artifact))
-                );
-
-                // Reconstruct bricks from all valid completed nodes
-                // (This handles cases where verifiedBricks array was lost/partial on resume)
-                const existingIds = new Set(allVerifiedBricks.map(b => b.id));
-
-                completedNodes.forEach(node => {
-                    // [V2.99 Improvement] Handle both String and Object outputs
-                    // and extraction of inner artifact from JSON wrappers
-                    if (((node.type as string) === 'specialist' || (node.type as string) === 'custom') && !existingIds.has(node.id)) {
-                        let finalArtifact = "";
-
-                        // Priority 1: Root Output (Most reliable for text)
-                        // Priority 2: Data Artifact (Redundant copy)
-                        const rawOutput = node.output || (node.data as any).artifact;
-
-                        if (typeof rawOutput === 'string') {
-                            if (rawOutput.length > 50) {
-                                // Try to parse if it looks like JSON wrapper
-                                try {
-                                    if (rawOutput.trim().startsWith('{')) {
-                                        const parsed = JSON.parse(rawOutput);
-                                        finalArtifact = parsed.repaired_artifact || parsed.artifact || (parsed.repairedArtifact as any)?.content || rawOutput;
-                                        // Handle nested structure from debug report
-                                        if (typeof finalArtifact === 'object') {
-                                            // If it's still an object (e.g. schema definition), stringify it nicely
-                                            if (parsed.repaired_artifact && typeof parsed.repaired_artifact === 'object') {
-                                                finalArtifact = JSON.stringify(parsed.repaired_artifact, null, 2);
-                                            } else {
-                                                finalArtifact = JSON.stringify(finalArtifact, null, 2);
-                                            }
-                                        }
-                                    } else {
-                                        finalArtifact = rawOutput;
-                                    }
-                                } catch (e) {
-                                    finalArtifact = rawOutput; // Treat as smooth text
-                                }
-                            }
-                        } else if (typeof rawOutput === 'object' && rawOutput !== null) {
-                            // It's already an object in DB
-                            finalArtifact = (rawOutput as any).repaired_artifact || (rawOutput as any).artifact || JSON.stringify(rawOutput, null, 2);
-                            if (typeof finalArtifact === 'object') {
-                                finalArtifact = JSON.stringify(finalArtifact, null, 2);
-                            }
-                        }
-
-                        if (finalArtifact && finalArtifact.length > 20) {
-                            allVerifiedBricks.push({
-                                id: node.id,
-                                instruction: node.instruction || node.label || "Unknown Task",
-                                persona: (node.data as any).persona || "Unknown Specialist",
-                                artifact: finalArtifact,
-                                confidence: 100,
-                                verifiedAt: Date.now()
-                            } as any);
-                        }
-                    }
-                });
-
-                // Sort chronologically
-                allVerifiedBricks.sort((a, b) => a.id.localeCompare(b.id));
-
-                this.addLog('info', `[Download] Assembled ${allVerifiedBricks.length} verified bricks for export.`);
-
-                // 2. Compile Fresh Bible
-                const assembly = await this.losslessCompiler.compile({
-                    verifiedBricks: allVerifiedBricks as any,
-                    projectMetadata: {
-                        name: (store.projectPlan as any)?.overview?.name || "Ouroboros Project",
-                        domain: store.livingConstitution.domain,
-                        generatedAt: Date.now(),
-                        brickCount: allVerifiedBricks.length,
-                        techStack: store.livingConstitution.techStack,
-                        constraints: store.livingConstitution.constraints,
-                        decisions: store.livingConstitution.decisions,
-                        warnings: store.livingConstitution.warnings,
-                        originalPrompt: store.livingConstitution.originalRequirements || store.documentContent
-                    }
-                });
-
-                let projectBible = assembly.manifestation;
-
-                // [V2.99] Append Token Usage Report
-                if (store.usageMetrics && Object.keys(store.usageMetrics).length > 0) {
-                    projectBible += "\n\n---\n\n## 📊 Efficiency Report (Token Usage)\n\n";
-                    projectBible += "| Model | Requests | Prompt | Completion | Total |\n";
-                    projectBible += "| :--- | :---: | :---: | :---: | :---: |\n";
-
-                    let grandTotal = 0;
-                    Object.entries(store.usageMetrics).forEach(([model, stats]) => {
-                        projectBible += `| **${model}** | ${stats.requestCount} | ${stats.promptTokens.toLocaleString()} | ${stats.completionTokens.toLocaleString()} | ${stats.totalTokens.toLocaleString()} |\n`;
-                        grandTotal += stats.totalTokens;
-                    });
-
-                    projectBible += `| **TOTAL** | | | | **${grandTotal.toLocaleString()}** |\n`;
-                    projectBible += `\n*Report generated at ${new Date().toISOString()}*\n`;
-                }
-
-                // 3. Download
-                const blob = new Blob([projectBible], { type: 'text/markdown' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `PROJECT_BIBLE_${date}.md`;
-                a.click();
-                URL.revokeObjectURL(url);
-
-                this.addLog('success', '[Download] Project Bible (Fresh Build) downloaded.');
-
-            } catch (error) {
-                console.error("Download Compilation Failed:", error);
-                this.addLog('error', `[Download] Compilation failed: ${error}`);
-                alert("Failed to generate Project Bible. Check console for details.");
-            }
-        } else {
-            // JSON format
+        if (format === 'json') {
             const data = {
                 generatedAt: new Date().toISOString(),
                 generator: 'Ouroboros Engine V2.99',
@@ -2552,17 +2896,112 @@ export class OuroborosEngine {
             a.download = `project_data_${new Date().toISOString().split('T')[0]}.json`;
             a.click();
             URL.revokeObjectURL(url);
+            return;
+        }
+
+        const date = new Date().toISOString().split('T')[0];
+        this.addLog('info', '[Download] Generative Export: Re-compiling from full history...');
+
+        try {
+            let allVerifiedBricks = [...store.verifiedBricks];
+            const allNodes = await db.nodes.toArray();
+            const completedNodes = allNodes.filter(n =>
+                n.status === 'complete' &&
+                (n.output || (n.data && (n.data as any).artifact))
+            );
+
+            const existingIds = new Set(allVerifiedBricks.map(b => b.id));
+            completedNodes.forEach(node => {
+                if (!((node.type as string) === 'specialist' || (node.type as string) === 'custom')) return;
+                if (existingIds.has(node.id)) return;
+
+                const extraction = extractArtifactPayload(node.output || (node.data as any).artifact);
+                if (!extraction.artifact || extraction.artifact.length <= 20) return;
+
+                allVerifiedBricks.push({
+                    id: node.id,
+                    instruction: node.instruction || node.label || 'Unknown Task',
+                    persona: node.persona || (node.data as any).persona || 'Unknown Specialist',
+                    artifact: extraction.artifact,
+                    confidence: 100,
+                    verifiedAt: Date.now()
+                } as any);
+            });
+
+            allVerifiedBricks.sort((a, b) => a.id.localeCompare(b.id));
+            this.addLog('info', `[Download] Assembled ${allVerifiedBricks.length} verified bricks for export.`);
+
+            this.losslessCompiler.updateConfig({
+                outputProfile: store.settings.outputProfile || 'lossless_only',
+                enableSoulForNonCreativeModes: store.settings.enableSoulForNonCreativeModes || false,
+                intentTarget: store.settings.creativeOutputTarget || 'auto',
+                outputFormat: 'structured'
+            });
+
+            const assembly = await this.losslessCompiler.compile({
+                verifiedBricks: allVerifiedBricks as any,
+                projectMetadata: {
+                    name: (store.projectPlan as any)?.overview?.name || 'Ouroboros Project',
+                    domain: store.livingConstitution.domain,
+                    generatedAt: Date.now(),
+                    brickCount: allVerifiedBricks.length,
+                    techStack: store.livingConstitution.techStack,
+                    constraints: store.livingConstitution.constraints,
+                    decisions: store.livingConstitution.decisions,
+                    warnings: store.livingConstitution.warnings,
+                    originalPrompt: store.livingConstitution.originalRequirements || store.documentContent,
+                    mode: store.livingConstitution.mode as any,
+                    intentTarget: store.settings.creativeOutputTarget || 'auto'
+                }
+            });
+
+            let payload = assembly.manifestation;
+            let mimeType = 'text/markdown';
+            let fileName = `PROJECT_BIBLE_${date}.md`;
+
+            if (format === 'canonical_json') {
+                payload = assembly.canonicalManifestJson;
+                mimeType = 'application/json';
+                fileName = `canonical_manifest_${date}.json`;
+            } else if (format === 'lossless_markdown') {
+                payload = assembly.canonicalLosslessMarkdown;
+                fileName = `lossless_manifest_${date}.md`;
+            } else if (format === 'soul_markdown') {
+                payload = assembly.manifestSoul;
+                fileName = `manifest_soul_${date}.md`;
+            }
+
+            if (format === 'markdown' && store.usageMetrics && Object.keys(store.usageMetrics).length > 0) {
+                payload += '\n\n---\n\n## Efficiency Report (Token Usage)\n\n';
+                payload += '| Model | Requests | Prompt | Completion | Total |\n';
+                payload += '| :--- | :---: | :---: | :---: | :---: |\n';
+
+                let grandTotal = 0;
+                Object.entries(store.usageMetrics).forEach(([model, stats]) => {
+                    payload += `| **${model}** | ${stats.requestCount} | ${stats.promptTokens.toLocaleString()} | ${stats.completionTokens.toLocaleString()} | ${stats.totalTokens.toLocaleString()} |\n`;
+                    grandTotal += stats.totalTokens;
+                });
+
+                payload += `| **TOTAL** | | | | **${grandTotal.toLocaleString()}** |\n`;
+                payload += `\n*Report generated at ${new Date().toISOString()}*\n`;
+            }
+
+            const blob = new Blob([payload], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            this.addLog('success', `[Download] Exported ${format}.`);
+        } catch (error) {
+            console.error('Download Compilation Failed:', error);
+            this.addLog('error', `[Download] Compilation failed: ${error}`);
+            alert('Failed to generate export. Check console for details.');
         }
     }
 
-    /**
-     * Transform JSON manifestation to human-readable prose
-     * 
-     * This is particularly useful when running with small/turbo models (like gemma3:12b)
-     * which output structured JSON rather than narrative markdown.
-     * 
-     * @param format - Target format for the transformation
-     */
     public async transformManifestation(
         format: 'narrative' | 'documentation' | 'executive_summary' | 'technical_spec' = 'documentation'
     ): Promise<void> {
@@ -2593,30 +3032,20 @@ export class OuroborosEngine {
             let hasJsonOutputs = false;
 
             for (const node of completedNodes) {
-                let output = node.output || (node.data as any).artifact;
-
-                // Try to parse if it's a JSON string
-                if (typeof output === 'string') {
-                    const trimmed = output.trim();
-
-                    // Check if it starts with { (likely JSON)
-                    if (trimmed.startsWith('{')) {
-                        try {
-                            output = JSON.parse(output);
-                            hasJsonOutputs = true;
-                        } catch {
-                            // Keep as string - might be markdown or plain text
-                        }
-                    }
-                } else if (typeof output === 'object' && output !== null) {
+                const output = node.output || (node.data as any).artifact;
+                const extraction = extractArtifactPayload(output);
+                if (extraction.envelopeDetected) {
                     hasJsonOutputs = true;
+                }
+                if (!extraction.artifact) {
+                    continue;
                 }
 
                 nodeOutputs.push({
                     id: node.id,
                     label: node.label || node.instruction || 'Unknown Task',
-                    department: (node.data as any)?.persona || 'Unknown Specialist',
-                    output
+                    department: node.persona || (node.data as any)?.persona || 'Unknown Specialist',
+                    output: extraction.artifact
                 });
             }
 
@@ -3115,7 +3544,12 @@ ${brick.artifact?.substring(0, 500)}${brick.artifact?.length > 500 ? '\n... (tru
 |--------|-------|
 `;
         Object.entries(statusCounts).forEach(([status, count]) => {
-            const icon = status === 'complete' ? '✅' : status === 'error' ? '❌' : status === 'pending' ? '⏳' : status === 'running' ? '🔄' : '•';
+            const icon =
+                status === 'complete' ? '✅' :
+                    status === 'error' ? '❌' :
+                        status === 'pending' ? '⏳' :
+                            status === 'queued' ? '🕒' :
+                                status === 'running' ? '🔄' : '•';
             report += `| ${icon} ${status} | ${count} |\n`;
         });
 
@@ -3128,7 +3562,7 @@ ${brick.artifact?.substring(0, 500)}${brick.artifact?.length > 500 ? '\n... (tru
 |-------|-------|
 | **Type** | ${node.type} |
 | **Status** | ${node.status} |
-| **Score** | ${node.score || 'N/A'} |
+| **Score** | ${typeof node.score === 'number' ? node.score : 'N/A'} |
 | **Department** | ${node.department || 'N/A'} |
 | **Mode** | ${node.mode || 'N/A'} |
 | **Dependencies** | ${node.dependencies?.join(', ') || 'None'} |
@@ -3136,7 +3570,7 @@ ${brick.artifact?.substring(0, 500)}${brick.artifact?.length > 500 ? '\n... (tru
 `;
             if (node.debugData) {
                 report += `| **Model Used** | ${node.debugData.modelUsed || 'N/A'} |
-| **Execution Time** | ${node.debugData.executionTimeMs || 'N/A'} ms |
+| **Execution Time** | ${typeof node.debugData.executionTimeMs === 'number' ? node.debugData.executionTimeMs : 'N/A'} ms |
 `;
             }
 
@@ -3165,6 +3599,30 @@ ${node.debugData.lastPrompt.substring(0, 1000)}${node.debugData.lastPrompt.lengt
 ${node.debugData.rawResponse.substring(0, 1000)}${node.debugData.rawResponse.length > 1000 ? '\n... (truncated)' : ''}
 \`\`\`
 `;
+            }
+
+            if (node.debugData?.attempts && node.debugData.attempts.length > 0) {
+                report += `
+**Attempt Timeline (${node.debugData.attempts.length}):**
+`;
+                for (const attempt of node.debugData.attempts) {
+                    report += `- Attempt ${attempt.attemptNumber}: ${attempt.outcome} | model=${attempt.modelUsed || 'N/A'} | temp=${typeof attempt.temperature === 'number' ? attempt.temperature : 'N/A'}\n`;
+                    if (attempt.tribunal) {
+                        report += `  - Tribunal: ${attempt.tribunal.verdict} | confidence=${attempt.tribunal.confidence ?? 'N/A'} | evidence=${attempt.tribunal.evidenceCount ?? 0}\n`;
+                    }
+                    if (attempt.promptUsed) {
+                        report += `  - Prompt: ${attempt.promptUsed.substring(0, 220).replace(/\n/g, ' ')}\n`;
+                    }
+                    if (attempt.rawResponse) {
+                        report += `  - Raw: ${attempt.rawResponse.substring(0, 220).replace(/\n/g, ' ')}\n`;
+                    }
+                    if (attempt.notes) {
+                        report += `  - Notes: ${attempt.notes}\n`;
+                    }
+                    if (attempt.artifactPreview) {
+                        report += `  - Artifact Preview: ${attempt.artifactPreview.substring(0, 240).replace(/\n/g, ' ')}\n`;
+                    }
+                }
             }
 
             report += `---
@@ -3235,10 +3693,11 @@ ${store.manifestation}
             while (changed) {
                 changed = false;
                 Object.values(nodes).forEach(node => {
-                    if (node.dependencies.length === 0) {
+                    const dependencyIds = Array.isArray(node.dependencies) ? node.dependencies : [];
+                    if (dependencyIds.length === 0) {
                         if (layers[node.id] !== 0) { layers[node.id] = 0; changed = true; }
                     } else {
-                        const maxDep = Math.max(...node.dependencies.map(d => layers[d] ?? -1));
+                        const maxDep = Math.max(...dependencyIds.map(d => layers[d] ?? -1));
                         if (maxDep !== -1 && layers[node.id] !== maxDep + 1) { layers[node.id] = maxDep + 1; changed = true; }
                     }
                 });
@@ -3331,3 +3790,6 @@ ${store.manifestation}
         return resp;
     }
 }
+
+
+

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import { OuroborosEngine } from '../engine/OuroborosEngine';
-import { AppSettings, LogEntry, Node } from '../types';
+import { AppSettings, LogEntry, Node, NodeAttemptRecord } from '../types';
 import { MODELS } from '../constants';
 import { AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -24,7 +24,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
         OuroborosEngine.getInstance().updateSettings(newSettings);
     };
 
-    const [activeTab, setActiveTab] = useState<'stream' | 'output' | 'prompt' | 'identity' | 'mdap' | 'logs' | 'artifacts' | 'tribunal'>('stream');
+    const [activeTab, setActiveTab] = useState<'stream' | 'output' | 'prompt' | 'identity' | 'mdap' | 'logs' | 'attempts' | 'artifacts' | 'tribunal'>('stream');
 
     const [rescueModel, setRescueModel] = useState<string>('');
     const [isGlobalRescue, setIsGlobalRescue] = useState(false);
@@ -32,7 +32,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
     if (!node) return null;
 
     const hasArtifacts = node.artifacts && (node.artifacts.code || node.artifacts.specification || node.artifacts.proof);
-    const isTribunal = node.type === 'gatekeeper' && node.data?.judgeOutputs;
+    const isTribunal = Boolean(node.data?.judgeOutputs || node.data?.antagonistDuel);
 
 
     return (
@@ -65,8 +65,8 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
 
                                 <span>SCORE</span>
                                 <span className="border-b border-dotted border-emerald-800/50 relative -top-1"></span>
-                                <span className={`${node.score && node.score > 80 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                    {node.score ? `${node.score}%` : 'N/A'}
+                                <span className={`${typeof node.score === 'number' && node.score > 80 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                    {typeof node.score === 'number' ? `${node.score}%` : 'N/A'}
                                 </span>
                             </div>
 
@@ -78,7 +78,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
 
                     {/* Tabs - Tactical Style */}
                     <div className="flex gap-px bg-emerald-900/50 p-px rounded-sm">
-                        {['stream', 'output', 'prompt', 'identity', 'mdap', 'logs'].map(tab => (
+                        {['stream', 'output', 'prompt', 'identity', 'mdap', 'logs', 'attempts'].map(tab => (
                             <button
                                 key={tab}
                                 onClick={() => setActiveTab(tab as any)}
@@ -205,6 +205,8 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ nodeId, onClose })
                         </div>
                     ) : activeTab === 'mdap' ? (
                         <MDAPPanel node={node} />
+                    ) : activeTab === 'attempts' ? (
+                        <AttemptHistoryPanel attempts={node.debugData?.attempts || []} />
                     ) : activeTab === 'artifacts' ? (
                         <ArtifactsPanel artifacts={node.artifacts} />
                     ) : activeTab === 'tribunal' ? (
@@ -335,8 +337,93 @@ const ArtifactsPanel: React.FC<{ artifacts: any }> = ({ artifacts }) => {
     );
 };
 
+const AttemptHistoryPanel: React.FC<{ attempts: NodeAttemptRecord[] }> = ({ attempts }) => {
+    if (!attempts || attempts.length === 0) {
+        return <div className="text-xs text-emerald-800 italic">No attempt history captured.</div>;
+    }
+
+    return (
+        <div className="flex flex-col gap-3">
+            {[...attempts].sort((a, b) => a.attemptNumber - b.attemptNumber).map((attempt) => (
+                <div key={`${attempt.attemptNumber}-${attempt.startedAt}`} className="bg-black/20 p-2 rounded border border-emerald-900/30 flex flex-col gap-1">
+                    <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-emerald-300">Attempt {attempt.attemptNumber}</span>
+                        <span className="text-[10px] text-amber-400 uppercase">{attempt.outcome}</span>
+                    </div>
+                    <div className="text-[10px] text-emerald-600">
+                        Model: {attempt.modelUsed || 'N/A'} | Temp: {typeof attempt.temperature === 'number' ? attempt.temperature : 'N/A'}
+                    </div>
+                    {attempt.redFlags && attempt.redFlags.length > 0 && (
+                        <div className="text-[10px] text-rose-400">Red Flags: {attempt.redFlags.join(', ')}</div>
+                    )}
+                    {attempt.tribunal && (
+                        <div className="text-[10px] text-emerald-500">
+                            Tribunal: {attempt.tribunal.verdict.toUpperCase()} | Confidence: {attempt.tribunal.confidence ?? 'N/A'} | Evidence: {attempt.tribunal.evidenceCount ?? 0}
+                        </div>
+                    )}
+                    {attempt.notes && (
+                        <div className="text-[10px] text-amber-500">{attempt.notes}</div>
+                    )}
+                    {attempt.artifactPreview && (
+                        <pre className="text-[10px] text-emerald-200/80 whitespace-pre-wrap font-mono bg-black/30 p-2 rounded max-h-28 overflow-y-auto">{attempt.artifactPreview}</pre>
+                    )}
+                    {attempt.promptUsed && (
+                        <details className="text-[10px] text-emerald-500">
+                            <summary className="cursor-pointer">Prompt Used</summary>
+                            <pre className="text-[10px] text-emerald-200/80 whitespace-pre-wrap font-mono bg-black/30 p-2 rounded max-h-28 overflow-y-auto mt-1">{attempt.promptUsed}</pre>
+                        </details>
+                    )}
+                    {attempt.rawResponse && (
+                        <details className="text-[10px] text-emerald-500">
+                            <summary className="cursor-pointer">Raw Response</summary>
+                            <pre className="text-[10px] text-emerald-200/80 whitespace-pre-wrap font-mono bg-black/30 p-2 rounded max-h-28 overflow-y-auto mt-1">{attempt.rawResponse}</pre>
+                        </details>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+};
+
 const TribunalPanel: React.FC<{ result: any }> = ({ result }) => {
-    if (!result || !result.judgeOutputs) return null;
+    if (!result) return null;
+
+    if (result.antagonistDuel) {
+        const duel = result.antagonistDuel;
+        const initialAudit = duel.initialAudit;
+        const repairAttempt = duel.repairAttempt;
+
+        return (
+            <div className="flex flex-col gap-3">
+                <div className="bg-emerald-900/30 p-2 rounded text-xs text-emerald-300">
+                    Outcome: {duel.outcome} | Verified: {duel.isVerified ? 'YES' : 'NO'} | Rounds: {duel.totalRounds}
+                </div>
+                {initialAudit && (
+                    <div className="bg-black/20 p-2 rounded border border-emerald-900/30">
+                        <div className="text-xs text-emerald-400 font-bold">Initial Audit</div>
+                        <div className="text-[10px] text-emerald-500">Verdict: {initialAudit.verdict} | Confidence: {initialAudit.confidence ?? 'N/A'}</div>
+                        <p className="text-xs text-emerald-200/70 italic">"{initialAudit.reasoning}"</p>
+                        {(initialAudit.evidence || []).length > 0 && (
+                            <div className="mt-1 text-[10px] text-amber-400">Evidence count: {initialAudit.evidence.length}</div>
+                        )}
+                    </div>
+                )}
+                {repairAttempt && (
+                    <div className="bg-black/20 p-2 rounded border border-emerald-900/30">
+                        <div className="text-xs text-emerald-400 font-bold">Repair Attempt</div>
+                        <div className="text-[10px] text-emerald-500">Suggestions: {(repairAttempt.repairSuggestions || []).length}</div>
+                        {repairAttempt.reauditResult && (
+                            <div className="text-[10px] text-emerald-500">
+                                Re-audit: {repairAttempt.reauditResult.verdict} ({repairAttempt.reauditResult.confidence ?? 'N/A'})
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    if (!result.judgeOutputs) return null;
 
     return (
         <div className="flex flex-col gap-4">

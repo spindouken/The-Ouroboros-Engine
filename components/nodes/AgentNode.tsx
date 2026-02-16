@@ -7,7 +7,8 @@ import { Activity, Brain, Shield, Zap, Eye, Hexagon } from 'lucide-react';
 const AgentNode = ({ data, selected }: NodeProps) => {
     // STRICT Activity Check: 'running' is removed to prevent passive glow.
     // Only animate if actively thinking or performing work.
-    const isProcessing = ['running', 'planning', 'reflexion', 'synthesizing', 'auditing', 'critiquing', 'verifying', 'compiling', 'thinking'].includes(data.status);
+    const isQueued = data.status === 'queued';
+    const isProcessing = ['running', 'planning', 'reflexion', 'synthesizing', 'auditing', 'critiquing', 'verifying', 'compiling', 'thinking', 'decomposing'].includes(data.status);
     const isComplete = data.status === 'complete';
     const isError = data.status === 'error';
 
@@ -33,6 +34,7 @@ const AgentNode = ({ data, selected }: NodeProps) => {
                 "flex flex-col overflow-hidden shadow-xl",
                 selected ? "border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.3)]" : "border-emerald-900/50 hover:border-emerald-500/50",
                 isProcessing ? "bg-emerald-950/90 border-emerald-400/50" : "bg-[#0a0a0a]/90",
+                isQueued && "bg-amber-950/40 border-amber-500/50",
                 isError && "border-red-500/50 bg-red-950/20"
             )}
         >
@@ -44,6 +46,9 @@ const AgentNode = ({ data, selected }: NodeProps) => {
                     {/* Bright White Halo - No Blending for Max Visibility */}
                     <div className="absolute -inset-[1px] rounded-lg border-2 border-white shadow-[0_0_15px_rgba(255,255,255,0.9)] z-10 pointer-events-none" />
                 </>
+            )}
+            {isQueued && !isProcessing && (
+                <div className="absolute -inset-[2px] rounded-lg border border-amber-400/60 shadow-[0_0_16px_rgba(245,158,11,0.35)] z-10 pointer-events-none" />
             )}
 
             {/* Header */}
@@ -93,6 +98,12 @@ const AgentNode = ({ data, selected }: NodeProps) => {
                     <div className="flex items-center gap-2 text-emerald-400 animate-pulse">
                         <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />
                         <span>PROCESSING...</span>
+                    </div>
+                )}
+                {isQueued && !isProcessing && (
+                    <div className="flex items-center gap-2 text-amber-300">
+                        <div className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
+                        <span>QUEUED...</span>
                     </div>
                 )}
             </div>

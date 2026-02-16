@@ -223,6 +223,10 @@ export const GraphView: React.FC<GraphViewProps> = ({ graph, selectedId, onSelec
                         stroke = "#f43f5e"; // Rose for security patching
                         animateClass = "animate-pulse";
                     }
+                    if (node.status === 'queued') {
+                        stroke = "#f59e0b"; // Amber for queued/waiting
+                        fill = "#451a03";
+                    }
 
                     if (isSelected) stroke = "#fff";
 

@@ -1,13 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Settings, RefreshCw, Flame, Workflow, CheckCircle, StopCircle, RotateCcw, Sparkles, Download, Play, Pause, Eye, Edit2, ChevronRight, Trash2, FileText, X, Plus, Save, FolderArchive, Wand2 } from 'lucide-react';
 import { AppMode, LogEntry } from '../types';
 import { DEPARTMENTS } from '../constants';
 import { useOuroborosStore } from '../store/ouroborosStore';
 import { OuroborosEngine } from '../engine/OuroborosEngine';
+import type { ProjectMode } from '../engine/genesis-protocol';
+import { getModeDisplayName } from '../engine/utils/mode-helpers';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/ouroborosDB';
 import clsx from 'clsx';
 import { BioButton } from './ui/BioButton';
+import { ModeBadge } from './mode/ModeBadge';
+import { ChangeModeButton } from './mode/ChangeModeButton';
+import { ModeSelector } from './mode/ModeSelector';
 
 import { useSoundEffects } from '../hooks/useSoundEffects';
 import { OracleChat } from './oracle/OracleChat';
@@ -317,16 +322,56 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         setPrismAnalysis,
         livingConstitution,
         updateLivingConstitution,
+        setProjectModeOverride,
         originalRequirements,
-        verifiedBricks
+        verifiedBricks,
+        hasExecutionStarted,
+        addAlert
     } = useOuroborosStore();
 
     const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
     const [prismViewTab, setPrismViewTab] = useState<'council' | 'constitution' | 'telemetry'>('council');
     const [showOriginalPrompt, setShowOriginalPrompt] = useState(false);
+    const [showModeSelector, setShowModeSelector] = useState(false);
     const isProcessing = status === 'thinking';
+    const isModeLocked = hasExecutionStarted;
+    const modeConfidencePct = Math.round((livingConstitution.modeConfidence ?? 0) * 100);
+    const modeDetected = Boolean(livingConstitution.mode);
     const engine = OuroborosEngine.getInstance();
     const { playClick, playHover } = useSoundEffects();
+
+    useEffect(() => {
+        if (isModeLocked && showModeSelector) {
+            setShowModeSelector(false);
+        }
+    }, [isModeLocked, showModeSelector]);
+
+    const lockModeAlert = () => {
+        addAlert('error', 'MODE LOCKED', 'Execution has started. Mode cannot be changed for this session.');
+    };
+
+    const handleChangeModeClick = () => {
+        if (isModeLocked) {
+            lockModeAlert();
+            return;
+        }
+        setShowModeSelector(prev => !prev);
+    };
+
+    const handleSelectMode = (mode: ProjectMode) => {
+        if (isModeLocked) {
+            lockModeAlert();
+            return;
+        }
+
+        const applied = setProjectModeOverride(mode);
+        if (!applied) {
+            lockModeAlert();
+            return;
+        }
+        setShowModeSelector(false);
+        addAlert('success', 'MODE UPDATED', `Project mode set to ${getModeDisplayName(mode)}.`);
+    };
 
     const handleStop = () => {
         playClick();
@@ -350,6 +395,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                         <div>
                             <h1 className="font-display font-black text-emerald-100 tracking-wider text-2xl drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] bg-clip-text text-transparent bg-gradient-to-r from-emerald-100 to-emerald-400">THE OUROBOROS ENGINE</h1>
                             <div className="text-[10px] text-emerald-500/80 font-mono tracking-[0.2em] uppercase">v3.0.0 // PRAGMATIC BRICK FACTORY</div>
+                            <ModeBadge mode={livingConstitution.mode} className="mt-2" />
                         </div>
                     </div>
                     <button
@@ -377,6 +423,42 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                         MANIFEST
                     </BioButton>
                 </div>
+
+                {modeDetected && (
+                    <div className="rounded border border-emerald-900/50 bg-black/30 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                                <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-500">
+                                    Detected Project Mode
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                    <ModeBadge mode={livingConstitution.mode} />
+                                    {livingConstitution.modeConfidence !== undefined && (
+                                        <span className="text-[10px] font-bold text-cyan-400">
+                                            {modeConfidencePct}% confidence
+                                        </span>
+                                    )}
+                                    <span className="rounded border border-emerald-900/60 bg-emerald-950/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-emerald-500">
+                                        {livingConstitution.modeSource === 'user_override' ? 'user override' : 'auto detected'}
+                                    </span>
+                                </div>
+                                {livingConstitution.modeReasoning && (
+                                    <p className="mt-2 text-[10px] leading-relaxed text-emerald-600">
+                                        {livingConstitution.modeReasoning}
+                                    </p>
+                                )}
+                            </div>
+                            <ChangeModeButton locked={isModeLocked} onClick={handleChangeModeClick} />
+                        </div>
+
+                        {showModeSelector && (
+                            <ModeSelector
+                                currentMode={livingConstitution.mode}
+                                onSelectMode={handleSelectMode}
+                            />
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* INPUT AREA */}
@@ -548,6 +630,43 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
 
                                                 {/* Tasks Review */}
                                                 <div className="space-y-3">
+                                                    {prismAnalysis.stepB?.telemetry && (
+                                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[10px]">
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Strategy</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.decompositionStrategy}</div>
+                                                            </div>
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Iterations</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.totalIterations}</div>
+                                                            </div>
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Max Depth</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.maxDepthReached}</div>
+                                                            </div>
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Stalls</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.stallCycles}</div>
+                                                            </div>
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Stop Reason</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.stopReason}</div>
+                                                            </div>
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Overlap Reduced</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.overlapReduced}</div>
+                                                            </div>
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Rejected Splits</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.rejectedSplits}</div>
+                                                            </div>
+                                                            <div className="bg-black/40 border border-emerald-900/30 rounded px-2 py-1">
+                                                                <div className="text-emerald-600 uppercase">Mode Drift Events</div>
+                                                                <div className="text-emerald-300 font-bold">{prismAnalysis.stepB.telemetry.modeDriftEvents}</div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
                                                     <div className="flex justify-between items-center border-b border-emerald-900/30 pb-1">
                                                         <h3 className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.2em]">
                                                             Decomposed Task List ({prismAnalysis.stepB.atomicTasks.length} tasks)
